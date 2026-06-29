@@ -19,6 +19,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory) // No dock icon
 
+        // Under the test host, skip the event tap / Accessibility prompt / repo indexing.
+        // Unit tests exercise the logic directly and must not trigger system side effects.
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+            return
+        }
+
         requestPermissions()
 
         symbolIndex = SymbolIndex()
