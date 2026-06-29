@@ -9,13 +9,18 @@ struct RegexParser {
     static func parse(url: URL, language: Language) throws -> [Symbol] {
         let content = try String(contentsOf: url, encoding: .utf8)
         let relativePath = url.lastPathComponent // caller should pass full relative path
+        return parse(source: content, language: language, path: relativePath)
+    }
 
+    /// Parse already-loaded source text. Split out from `parse(url:language:)` so callers
+    /// (and tests) can run the extractor without touching the filesystem.
+    static func parse(source: String, language: Language, path: String) -> [Symbol] {
         switch language {
-        case .python:     return parsePython(content, path: relativePath)
-        case .typescript: return parseTypeScript(content, path: relativePath)
-        case .rust:       return parseRust(content, path: relativePath)
-        case .go:         return parseGo(content, path: relativePath)
-        case .swift:      return parseSwift(content, path: relativePath)
+        case .python:     return parsePython(source, path: path)
+        case .typescript: return parseTypeScript(source, path: path)
+        case .rust:       return parseRust(source, path: path)
+        case .go:         return parseGo(source, path: path)
+        case .swift:      return parseSwift(source, path: path)
         }
     }
 

@@ -72,31 +72,57 @@ class SymbolIndex: ObservableObject {
 
     // MARK: - Search
 
-    /// Fuzzy symbol search — returns top 10 results sorted by score.
+    /// Strict-substring symbol search — returns the top 10 results ranked by score.
+    /// Ranking/matching lives in `SymbolMatcher` so it can be unit-tested in isolation.
     func search(_ query: String) -> [Symbol] {
-        guard !query.isEmpty else {
-            return Array(symbols.prefix(10))
-        }
-        let q = query.lowercased()
-        let results = symbols
-            .compactMap { sym -> (Symbol, Int)? in
-                let score = fuzzyScore(q, sym.name.lowercased())
-                return score > 0 ? (sym, score) : nil
-            }
-            .sorted { $0.1 > $1.1 }
-            .prefix(10)
-            .map(\.0)
+        let results = SymbolMatcher.search(query, in: symbols)
         #if DEBUG
         print("🔎 search(\"\(query)\") → \(results.count): \(results.map(\.name))")
         #endif
         return results
     }
 
-    // MARK: - Fuzzy scoring
+    #if DEBUG
+    /// Seed a known symbol set for tests, bypassing git/async indexing.
+    func loadForTesting(_ symbols: [Symbol]) {
+        self.symbols = symbols
+        self.symbolCount = symbols.count
+    }
+    #endif
+}
 
-    /// Scores how well `query` matches `candidate` using strict substring ("contains")
-    /// semantics. Higher = better match. 0 = no match (query is not a substring).
-    private func fuzzyScore(_ query: String, _ candidate: String) -> Int {
+// MARK: - Matching
+
+/// Pure, dependency-free symbol matching/ranking. Lives here (rather than its own file) so
+/// it builds without a project-file edit, but it is intentionally free of `SymbolIndex`'s
+/// `@MainActor`/IO so it can be unit-tested in isolation.
+///
+/// Semantics are strict substring ("contains"): a symbol matches only when the lowercased
+/// query appears as a contiguous run inside the lowercased name. There is intentionally no
+/// scattered-subsequence fallback (it surfaced surprising results like "selectedText" for
+/// the query "set").
+enum SymbolMatcher {
+
+    /// Returns the best `limit` symbols for `query`, ranked by `score` descending.
+    /// An empty query returns the first `limit` symbols unranked.
+    static func search(_ query: String, in symbols: [Symbol], limit: Int = 10) -> [Symbol] {
+        guard !query.isEmpty else {
+            return Array(symbols.prefix(limit))
+        }
+        let q = query.lowercased()
+        return symbols
+            .compactMap { sym -> (Symbol, Int)? in
+                let s = score(query: q, candidate: sym.name.lowercased())
+                return s > 0 ? (sym, s) : nil
+            }
+            .sorted { $0.1 > $1.1 }
+            .prefix(limit)
+            .map(\.0)
+    }
+
+    /// Scores how well `query` matches `candidate`. Both are expected to already be
+    /// lowercased. Higher = better. 0 = no match (query is not a substring).
+    static func score(query: String, candidate: String) -> Int {
         // Exact match
         if candidate == query { return 1000 }
 
@@ -109,8 +135,7 @@ class SymbolIndex: ObservableObject {
             return max(700 - offset * 2, 500)
         }
 
-        // Not a substring → no match. (No scattered-subsequence fallback: it surfaced
-        // surprising results like "selectedText" for the query "set".)
+        // Not a substring → no match.
         return 0
     }
 }

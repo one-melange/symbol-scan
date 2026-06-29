@@ -46,6 +46,38 @@ Work on a feature branch with Claude Code, then build and run from Xcode:
 
 ---
 
+## Testing
+
+Unit and headless-interaction tests live in the **SymbolScanTests** target (Swift Testing).
+They cover the pure logic — symbol matching/ranking, the per-language `RegexParser`,
+`RepoScanner` path helpers, language detection — and drive the real `SymbolPickerViewModel`
++ `SymbolIndex` through the picker flow (type → filter → arrow → select) without any UI,
+git, or system permissions.
+
+Run them:
+
+- **Xcode:** select the **SymbolScan** scheme → `Cmd+U`.
+- **CLI:**
+  ```bash
+  cd SymbolScan
+  xcodebuild test -scheme SymbolScan -destination 'platform=macOS'
+  ```
+
+Notes:
+- The app's heavy launch work (event tap, Accessibility prompt, repo indexing) is skipped
+  under the test host — see the `XCTestConfigurationFilePath` guard in `AppDelegate`.
+- `SymbolScanTests` is an **app-hosted** unit test bundle (`TEST_HOST` = the app), so
+  `@testable import SymbolScan` can reach internal types. It builds for **macOS only**.
+- The matching/ranking logic is isolated in `SymbolMatcher` (in `SymbolIndex.swift`) so it
+  can be tested without `@MainActor`/IO. Seed a known symbol set in view-model tests via
+  `SymbolIndex.loadForTesting(_:)` (DEBUG-only).
+- CI runs the same `xcodebuild test` on every push/PR — see `.github/workflows/tests.yml`.
+
+When adding a test file, drop it in `SymbolScanTests/` — the target uses a file-system
+synchronized group, so new files are picked up automatically (no project edit needed).
+
+---
+
 ## Permissions reference
 
 | Permission | Required for | Where to grant |
