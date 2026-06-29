@@ -33,6 +33,14 @@ class OverlayWindowController: NSWindowController {
     private let index: SymbolIndex
     private var hostingView: NSHostingView<SymbolPickerView>?
 
+    /// The app that was frontmost when the overlay appeared, so we can hand focus
+    /// back to it before injecting the selected symbol.
+    private var previousApp: NSRunningApplication?
+    /// Window-level key monitor that owns arrow/return/esc/tab while the overlay is up.
+    private var keyMonitor: Any?
+    /// The view model backing the currently-shown picker (nil while hidden).
+    private var viewModel: SymbolPickerViewModel?
+
     init(index: SymbolIndex) {
         self.index = index
         let window = OverlayWindow()
@@ -44,6 +52,13 @@ class OverlayWindowController: NSWindowController {
     func show(trigger: EventTap.Trigger) {
         guard let screen = NSScreen.main else { return }
 
+        // Capture the app that had focus when the trigger fired — must happen before
+        // we activate ourselves. Ignore ourselves (e.g. re-trigger while overlay is up).
+        let front = NSWorkspace.shared.frontmostApplication
+        if front?.bundleIdentifier != Bundle.main.bundleIdentifier {
+            previousApp = front
+        }
+
         // Position: centered horizontally, upper third of screen
         let width: CGFloat = 520
         let height: CGFloat = 420
@@ -52,8 +67,11 @@ class OverlayWindowController: NSWindowController {
 
         window?.setFrame(NSRect(x: x, y: y, width: width, height: height), display: true)
 
-        let pickerView = SymbolPickerView(index: index, trigger: trigger) { [weak self] in
-            self?.hide()
+        let vm = SymbolPickerViewModel(index: index)
+        self.viewModel = vm
+
+        let pickerView = SymbolPickerView(viewModel: vm, trigger: trigger) { [weak self] inject in
+            self?.confirmAndHide(inject: inject)
         }
 
         let hosting = NSHostingView(rootView: pickerView)
@@ -65,9 +83,62 @@ class OverlayWindowController: NSWindowController {
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+
+        installKeyMonitor(vm: vm)
     }
 
     func hide() {
+        removeKeyMonitor()
         window?.orderOut(nil)
+        viewModel = nil
+    }
+
+    /// Resolve the picker: inject the selected symbol, copy it, or just dismiss.
+    /// Called from both the key monitor and SwiftUI tap gestures.
+    private func confirmAndHide(inject: Bool, dismissOnly: Bool = false) {
+        let name = dismissOnly ? nil : viewModel?.selectedSymbolName()
+
+        if inject, let name {
+            hide()
+            // Hand focus back to the editor, then post keystrokes once it settles.
+            if let app = previousApp, !app.isTerminated {
+                app.activate()
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                TextInjector.inject(name, after: 0)
+            }
+        } else if !inject, let name {
+            TextInjector.copyToClipboard(name)
+            hide()
+        } else {
+            hide()
+        }
+
+        previousApp = nil
+    }
+
+    // MARK: - Key monitor
+
+    private func installKeyMonitor(vm: SymbolPickerViewModel) {
+        removeKeyMonitor() // never stack monitors across repeated show/hide
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self, weak vm] event in
+            guard let self, let vm, self.window?.isKeyWindow == true else { return event }
+
+            switch event.keyCode {
+            case 126: vm.moveSelection(-1); return nil                          // up arrow
+            case 125: vm.moveSelection(+1); return nil                          // down arrow
+            case 36, 76: self.confirmAndHide(inject: true); return nil          // return / keypad enter
+            case 48: self.confirmAndHide(inject: false); return nil             // tab → copy
+            case 53: self.confirmAndHide(inject: false, dismissOnly: true); return nil // esc
+            default: return event                                              // let typing through
+            }
+        }
+    }
+
+    private func removeKeyMonitor() {
+        if let m = keyMonitor {
+            NSEvent.removeMonitor(m)
+            keyMonitor = nil
+        }
     }
 }

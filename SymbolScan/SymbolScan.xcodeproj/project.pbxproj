@@ -19,6 +19,7 @@
 		8EDE63392FE5B2FF0024E0D5 /* RegexParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EDE63242FE5B2FF0024E0D5 /* RegexParser.swift */; };
 		8EDE633A2FE5B2FF0024E0D5 /* Symbol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EDE63262FE5B2FF0024E0D5 /* Symbol.swift */; };
 		8EDE633B2FE5B2FF0024E0D5 /* SymbolPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EDE632C2FE5B2FF0024E0D5 /* SymbolPickerView.swift */; };
+		8EDE63F12FE5B2FF0024E0D5 /* SymbolPickerViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EDE63F22FE5B2FF0024E0D5 /* SymbolPickerViewModel.swift */; };
 		8EDE633E2FE5B6410024E0D5 /* SwiftTreeSitter in Frameworks */ = {isa = PBXBuildFile; productRef = 8EDE633D2FE5B6410024E0D5 /* SwiftTreeSitter */; };
 		8EDE63402FE5B6410024E0D5 /* SwiftTreeSitterLayer in Frameworks */ = {isa = PBXBuildFile; productRef = 8EDE633F2FE5B6410024E0D5 /* SwiftTreeSitterLayer */; };
 /* End PBXBuildFile section */
@@ -36,6 +37,7 @@
 		8EDE63292FE5B2FF0024E0D5 /* EventTap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventTap.swift; sourceTree = "<group>"; };
 		8EDE632A2FE5B2FF0024E0D5 /* TextInjector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextInjector.swift; sourceTree = "<group>"; };
 		8EDE632C2FE5B2FF0024E0D5 /* SymbolPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SymbolPickerView.swift; sourceTree = "<group>"; };
+		8EDE63F22FE5B2FF0024E0D5 /* SymbolPickerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SymbolPickerViewModel.swift; sourceTree = "<group>"; };
 		8EDE632E2FE5B2FF0024E0D5 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -110,6 +112,7 @@
 			isa = PBXGroup;
 			children = (
 				8EDE632C2FE5B2FF0024E0D5 /* SymbolPickerView.swift */,
+				8EDE63F22FE5B2FF0024E0D5 /* SymbolPickerViewModel.swift */,
 			);
 			path = UI;
 			sourceTree = "<group>";
@@ -215,6 +218,7 @@
 				8EDE63392FE5B2FF0024E0D5 /* RegexParser.swift in Sources */,
 				8EDE633A2FE5B2FF0024E0D5 /* Symbol.swift in Sources */,
 				8EDE633B2FE5B2FF0024E0D5 /* SymbolPickerView.swift in Sources */,
+				8EDE63F12FE5B2FF0024E0D5 /* SymbolPickerViewModel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
