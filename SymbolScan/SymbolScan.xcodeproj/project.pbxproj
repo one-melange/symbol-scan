@@ -162,6 +162,7 @@
 			buildRules = (
 			);
 			dependencies = (
+				A11CE5D000000000000000D1 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				8E11A76B2FF2CDB100CA39BD /* SymbolScanTests */,
@@ -195,6 +196,24 @@
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
+
+/* Begin PBXContainerItemProxy section */
+		A11CE5D000000000000000C2 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 8E3AEF7F2FE5A90E00A8E037 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 8E3AEF862FE5A90E00A8E037;
+			remoteInfo = SymbolScan;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+		A11CE5D000000000000000D1 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 8E3AEF862FE5A90E00A8E037 /* SymbolScan */;
+			targetProxy = A11CE5D000000000000000C2 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin PBXProject section */
 		8E3AEF7F2FE5A90E00A8E037 /* Project object */ = {
