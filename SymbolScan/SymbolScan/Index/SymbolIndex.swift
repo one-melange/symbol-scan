@@ -94,8 +94,8 @@ class SymbolIndex: ObservableObject {
 
     // MARK: - Fuzzy scoring
 
-    /// Scores how well `query` matches `candidate`.
-    /// Higher = better match. 0 = no match.
+    /// Scores how well `query` matches `candidate` using strict substring ("contains")
+    /// semantics. Higher = better match. 0 = no match (query is not a substring).
     private func fuzzyScore(_ query: String, _ candidate: String) -> Int {
         // Exact match
         if candidate == query { return 1000 }
@@ -103,53 +103,14 @@ class SymbolIndex: ObservableObject {
         // Exact prefix
         if candidate.hasPrefix(query) { return 800 }
 
-        // Contiguous substring — rank these above any scattered subsequence match and
-        // guarantee they survive the top-10 cut. Earlier matches score higher.
+        // Contiguous substring — earlier matches score higher.
         if let r = candidate.range(of: query) {
             let offset = candidate.distance(from: candidate.startIndex, to: r.lowerBound)
             return max(700 - offset * 2, 500)
         }
 
-        // Subsequence match with scoring
-        var score = 0
-        var qi = query.startIndex
-        var ci = candidate.startIndex
-        var consecutive = 0
-        var lastMatchIndex: String.Index? = nil
-
-        while qi < query.endIndex && ci < candidate.endIndex {
-            if query[qi] == candidate[ci] {
-                // Bonus for consecutive matches
-                consecutive += 1
-                score += 10 + consecutive * 5
-
-                // Bonus for word boundary (preceded by _, -, uppercase boundary)
-                if ci == candidate.startIndex {
-                    score += 20
-                } else {
-                    let prev = candidate.index(before: ci)
-                    if candidate[prev] == "_" || candidate[prev] == "-" {
-                        score += 15
-                    }
-                }
-
-                lastMatchIndex = ci
-                qi = query.index(after: qi)
-            } else {
-                consecutive = 0
-            }
-            ci = candidate.index(after: ci)
-        }
-
-        // All query chars must match
-        guard qi == query.endIndex else { return 0 }
-
-        // Penalty for distance from start
-        if let last = lastMatchIndex {
-            let distance = candidate.distance(from: candidate.startIndex, to: last)
-            score -= distance * 2
-        }
-
-        return max(score, 1)
+        // Not a substring → no match. (No scattered-subsequence fallback: it surfaced
+        // surprising results like "selectedText" for the query "set".)
+        return 0
     }
 }
