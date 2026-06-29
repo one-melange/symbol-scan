@@ -14,7 +14,6 @@ struct SymbolPickerView: View {
 
     @StateObject private var vm: SymbolPickerViewModel
     @ObservedObject private var index: SymbolIndex
-    @FocusState private var searchFocused: Bool
 
     private let rowHeight: CGFloat = 44
 
@@ -41,9 +40,6 @@ struct SymbolPickerView: View {
                 .stroke(Color.white.opacity(0.12), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.4), radius: 24, x: 0, y: 8)
-        .onAppear {
-            searchFocused = true
-        }
     }
 
     // MARK: - Search bar
@@ -59,20 +55,11 @@ struct SymbolPickerView: View {
                 .background(.quaternary)
                 .clipShape(RoundedRectangle(cornerRadius: 4))
 
-            TextField("Search symbols…", text: $vm.query)
-                .textFieldStyle(.plain)
-                .font(.system(size: 15, weight: .regular, design: .default))
-                .focused($searchFocused)
-                // Navigation/resolution keys are handled here on the focused field so they
-                // win over the AppKit field editor (which otherwise eats arrow keys for
-                // cursor movement once the field contains text).
-                // Defer the selection mutation off the current view-update tick to avoid
-                // "Publishing changes from within view updates".
-                .onKeyPress(.upArrow)   { DispatchQueue.main.async { vm.moveSelection(-1) }; return .handled }
-                .onKeyPress(.downArrow) { DispatchQueue.main.async { vm.moveSelection(+1) }; return .handled }
-                .onKeyPress(.return)    { onResolve(.inject);  return .handled }
-                .onKeyPress(.tab)       { onResolve(.copy);    return .handled }
-                .onKeyPress(.escape)    { onResolve(.dismiss); return .handled }
+            // AppKit-backed field so navigation keys are intercepted at the field editor
+            // level (see SearchFieldRepresentable) instead of via SwiftUI .onKeyPress,
+            // which the field editor swallows once the field contains text.
+            SearchFieldRepresentable(vm: vm, onResolve: onResolve)
+                .frame(height: 20)
 
             if index.isIndexing {
                 ProgressView().scaleEffect(0.6)
@@ -91,7 +78,11 @@ struct SymbolPickerView: View {
                     if vm.results.isEmpty {
                         emptyState
                     } else {
-                        ForEach(Array(vm.results.enumerated()), id: \.element.id) { i, sym in
+                        // Identify rows by position so the list re-renders in place when
+                        // results change. Keying by Symbol.id (UUID) here while each row
+                        // also sets `.id(i)` gave SwiftUI two conflicting identities, so it
+                        // retained stale rows (e.g. kept showing the empty-query results).
+                        ForEach(Array(vm.results.enumerated()), id: \.offset) { i, sym in
                             SymbolRow(symbol: sym, isSelected: i == vm.selectedIndex)
                                 .id(i)
                                 .contentShape(Rectangle())
@@ -154,6 +145,84 @@ struct SymbolPickerView: View {
         .padding(24)
     }
 
+}
+
+// MARK: - Search Field (AppKit-backed)
+
+/// An `NSTextField` wrapped for SwiftUI so we can intercept navigation/resolution keys
+/// at the field-editor level. SwiftUI's `.onKeyPress` on a focused `TextField` is eaten
+/// by the field editor (cursor movement) once the field has text — `doCommandBySelector`
+/// runs *before* that, so arrows/return/tab/escape reach us reliably.
+struct SearchFieldRepresentable: NSViewRepresentable {
+    @ObservedObject var vm: SymbolPickerViewModel
+    var onResolve: (PickerAction) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(vm: vm, onResolve: onResolve)
+    }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField()
+        field.isBordered = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.placeholderString = "Search symbols…"
+        field.font = .systemFont(ofSize: 15, weight: .regular)
+        field.lineBreakMode = .byTruncatingTail
+        field.cell?.usesSingleLineMode = true
+        field.delegate = context.coordinator
+        field.stringValue = vm.query
+
+        // The borderless window must be key before it can hold first responder; defer a
+        // tick so makeKeyAndOrderFront has run.
+        DispatchQueue.main.async { [weak field] in
+            field?.window?.makeFirstResponder(field)
+        }
+        return field
+    }
+
+    func updateNSView(_ nsView: NSTextField, context: Context) {
+        // Keep the coordinator's closure fresh across re-renders.
+        context.coordinator.onResolve = onResolve
+        // Only write when different, so we don't reset the caret while the user types.
+        if nsView.stringValue != vm.query {
+            nsView.stringValue = vm.query
+        }
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        let vm: SymbolPickerViewModel
+        var onResolve: (PickerAction) -> Void
+
+        init(vm: SymbolPickerViewModel, onResolve: @escaping (PickerAction) -> Void) {
+            self.vm = vm
+            self.onResolve = onResolve
+        }
+
+        func controlTextDidChange(_ obj: Notification) {
+            guard let field = obj.object as? NSTextField else { return }
+            vm.updateQuery(field.stringValue)
+        }
+
+        func control(_ control: NSControl,
+                     textView: NSTextView,
+                     doCommandBy commandSelector: Selector) -> Bool {
+            switch commandSelector {
+            case #selector(NSResponder.moveUp(_:)):
+                vm.moveSelection(-1);  return true
+            case #selector(NSResponder.moveDown(_:)):
+                vm.moveSelection(+1);  return true
+            case #selector(NSResponder.insertNewline(_:)):
+                onResolve(.inject);    return true
+            case #selector(NSResponder.insertTab(_:)):
+                onResolve(.copy);      return true
+            case #selector(NSResponder.cancelOperation(_:)):
+                onResolve(.dismiss);   return true
+            default:
+                return false
+            }
+        }
+    }
 }
 
 // MARK: - Symbol Row
