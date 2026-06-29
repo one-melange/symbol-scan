@@ -1,16 +1,25 @@
 import SwiftUI
 
 struct SymbolPickerView: View {
-    let index: SymbolIndex
     let trigger: EventTap.Trigger
-    let onDismiss: () -> Void
+    /// Called when the picker resolves. `inject == true` → inject the selected
+    /// symbol; `inject == false` → dismiss (copy/cancel handled by the controller).
+    let onDismiss: (_ inject: Bool) -> Void
 
-    @State private var query: String = ""
-    @State private var results: [Symbol] = []
-    @State private var selectedIndex: Int = 0
+    @StateObject private var vm: SymbolPickerViewModel
+    @ObservedObject private var index: SymbolIndex
     @FocusState private var searchFocused: Bool
 
     private let rowHeight: CGFloat = 44
+
+    init(viewModel: SymbolPickerViewModel,
+         trigger: EventTap.Trigger,
+         onDismiss: @escaping (_ inject: Bool) -> Void) {
+        _vm = StateObject(wrappedValue: viewModel)
+        _index = ObservedObject(wrappedValue: viewModel.index)
+        self.trigger = trigger
+        self.onDismiss = onDismiss
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -27,16 +36,10 @@ struct SymbolPickerView: View {
         )
         .shadow(color: .black.opacity(0.4), radius: 24, x: 0, y: 8)
         .onAppear {
-            results = index.search("")
             searchFocused = true
-
-            // Pre-seed query from trigger prefix
-            if trigger == .at { query = "" }
-            if trigger == .hash { query = "" }
         }
-        .onChange(of: query) { _, q in
-            results = index.search(q)
-            selectedIndex = 0
+        .onChange(of: vm.query) { _, q in
+            vm.updateQuery(q)
         }
     }
 
@@ -53,20 +56,10 @@ struct SymbolPickerView: View {
                 .background(.quaternary)
                 .clipShape(RoundedRectangle(cornerRadius: 4))
 
-            TextField("Search symbols…", text: $query)
+            TextField("Search symbols…", text: $vm.query)
                 .textFieldStyle(.plain)
                 .font(.system(size: 15, weight: .regular, design: .default))
                 .focused($searchFocused)
-                .onKeyPress(keys: [.upArrow, .downArrow, .return, .escape, .tab]) { press in
-                    switch press.key {
-                    case .escape:            onDismiss(); return .handled
-                    case .return:            confirmSelection(inject: true); return .handled
-                    case .tab:               confirmSelection(inject: false); return .handled
-                    case .upArrow:           moveSelection(-1); return .handled
-                    case .downArrow:         moveSelection(+1); return .handled
-                    default:                 return .ignored
-                    }
-                }
 
             if index.isIndexing {
                 ProgressView().scaleEffect(0.6)
@@ -82,21 +75,21 @@ struct SymbolPickerView: View {
         ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: 0) {
-                    if results.isEmpty {
+                    if vm.results.isEmpty {
                         emptyState
                     } else {
-                        ForEach(Array(results.enumerated()), id: \.element.id) { i, sym in
-                            SymbolRow(symbol: sym, isSelected: i == selectedIndex)
+                        ForEach(Array(vm.results.enumerated()), id: \.element.id) { i, sym in
+                            SymbolRow(symbol: sym, isSelected: i == vm.selectedIndex)
                                 .id(i)
                                 .contentShape(Rectangle())
-                                .onTapGesture { selectedIndex = i; confirmSelection(inject: true) }
-                                .onHover { if $0 { selectedIndex = i } }
+                                .onTapGesture { vm.selectedIndex = i; onDismiss(true) }
+                                .onHover { if $0 { vm.selectedIndex = i } }
                         }
                     }
                 }
             }
-            .frame(minHeight: rowHeight * 5, maxHeight: CGFloat(min(max(results.count, 5), 8)) * rowHeight + 8)
-            .onChange(of: selectedIndex) { _, i in
+            .frame(minHeight: rowHeight * 5, maxHeight: CGFloat(min(max(vm.results.count, 5), 8)) * rowHeight + 8)
+            .onChange(of: vm.selectedIndex) { _, i in
                 withAnimation(.easeInOut(duration: 0.1)) { proxy.scrollTo(i, anchor: .center) }
             }
         }
@@ -135,7 +128,7 @@ struct SymbolPickerView: View {
 
     private var emptyState: some View {
         VStack(spacing: 6) {
-            Text(index.symbolCount == 0 ? "No repo indexed" : "No results for \"\(query)\"")
+            Text(index.symbolCount == 0 ? "No repo indexed" : "No results for \"\(vm.query)\"")
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
             if index.symbolCount == 0 {
@@ -148,30 +141,6 @@ struct SymbolPickerView: View {
         .padding(24)
     }
 
-    // MARK: - Actions
-
-    private func confirmSelection(inject: Bool) {
-        guard selectedIndex < results.count else { onDismiss(); return }
-        let sym = results[selectedIndex]
-        let text = sym.name
-
-        onDismiss()
-
-        if inject {
-            onDismiss()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                TextInjector.inject(text)
-            }
-        } else {
-            TextInjector.copyToClipboard(text)
-            onDismiss()
-        }
-    }
-
-    private func moveSelection(_ delta: Int) {
-        guard !results.isEmpty else { return }
-        selectedIndex = (selectedIndex + delta + results.count) % results.count
-    }
 }
 
 // MARK: - Symbol Row
