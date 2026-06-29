@@ -21,10 +21,21 @@ class RepoScanner {
     /// Falls back to FileManager walk if git isn't available.
     func enumerateSourceFiles() async throws -> [URL] {
         if isGitRepo, let files = try? await gitLsFiles() {
+            print("📂 enumerateSourceFiles: git ls-files → \(files.count) source files")
             return files
         }
-        return fileManagerWalk()
+        let files = fileManagerWalk()
+        print("📂 enumerateSourceFiles: FileManager fallback → \(files.count) source files")
+        return files
     }
+
+    /// Directory names we never want to descend into — build output, dependency
+    /// checkouts, VCS metadata. Protects the FileManager fallback (gitLsFiles already
+    /// honors .gitignore, so these are excluded there automatically).
+    private static let excludedDirs: Set<String> = [
+        "build", ".build", "DerivedData", "SourcePackages",
+        "node_modules", "Pods", ".git"
+    ]
 
     private func gitLsFiles() async throws -> [URL] {
         let process = Process()
@@ -63,9 +74,18 @@ class RepoScanner {
             options: [.skipsHiddenFiles, .skipsPackageDescendants]
         ) else { return [] }
 
-        return enumerator
-            .compactMap { $0 as? URL }
-            .filter { Language.detect(from: $0) != nil }
+        var results: [URL] = []
+        for case let url as URL in enumerator {
+            // Skip whole excluded subtrees (build output, dependency checkouts, etc.)
+            if url.pathComponents.contains(where: { RepoScanner.excludedDirs.contains($0) }) {
+                enumerator.skipDescendants()
+                continue
+            }
+            if Language.detect(from: url) != nil {
+                results.append(url)
+            }
+        }
+        return results
     }
 
     // MARK: - Repo root detection

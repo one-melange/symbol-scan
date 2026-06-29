@@ -1,10 +1,16 @@
 import SwiftUI
 
+/// How the picker resolved — drives what the controller does on close.
+enum PickerAction {
+    case inject   // insert the selected symbol into the source app
+    case copy     // copy the selected symbol to the clipboard
+    case dismiss  // close without selecting
+}
+
 struct SymbolPickerView: View {
     let trigger: EventTap.Trigger
-    /// Called when the picker resolves. `inject == true` → inject the selected
-    /// symbol; `inject == false` → dismiss (copy/cancel handled by the controller).
-    let onDismiss: (_ inject: Bool) -> Void
+    /// Called when the picker resolves (inject / copy / dismiss).
+    let onResolve: (PickerAction) -> Void
 
     @StateObject private var vm: SymbolPickerViewModel
     @ObservedObject private var index: SymbolIndex
@@ -14,11 +20,11 @@ struct SymbolPickerView: View {
 
     init(viewModel: SymbolPickerViewModel,
          trigger: EventTap.Trigger,
-         onDismiss: @escaping (_ inject: Bool) -> Void) {
+         onResolve: @escaping (PickerAction) -> Void) {
         _vm = StateObject(wrappedValue: viewModel)
         _index = ObservedObject(wrappedValue: viewModel.index)
         self.trigger = trigger
-        self.onDismiss = onDismiss
+        self.onResolve = onResolve
     }
 
     var body: some View {
@@ -37,9 +43,6 @@ struct SymbolPickerView: View {
         .shadow(color: .black.opacity(0.4), radius: 24, x: 0, y: 8)
         .onAppear {
             searchFocused = true
-        }
-        .onChange(of: vm.query) { _, q in
-            vm.updateQuery(q)
         }
     }
 
@@ -60,6 +63,16 @@ struct SymbolPickerView: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 15, weight: .regular, design: .default))
                 .focused($searchFocused)
+                // Navigation/resolution keys are handled here on the focused field so they
+                // win over the AppKit field editor (which otherwise eats arrow keys for
+                // cursor movement once the field contains text).
+                // Defer the selection mutation off the current view-update tick to avoid
+                // "Publishing changes from within view updates".
+                .onKeyPress(.upArrow)   { DispatchQueue.main.async { vm.moveSelection(-1) }; return .handled }
+                .onKeyPress(.downArrow) { DispatchQueue.main.async { vm.moveSelection(+1) }; return .handled }
+                .onKeyPress(.return)    { onResolve(.inject);  return .handled }
+                .onKeyPress(.tab)       { onResolve(.copy);    return .handled }
+                .onKeyPress(.escape)    { onResolve(.dismiss); return .handled }
 
             if index.isIndexing {
                 ProgressView().scaleEffect(0.6)
@@ -82,7 +95,7 @@ struct SymbolPickerView: View {
                             SymbolRow(symbol: sym, isSelected: i == vm.selectedIndex)
                                 .id(i)
                                 .contentShape(Rectangle())
-                                .onTapGesture { vm.selectedIndex = i; onDismiss(true) }
+                                .onTapGesture { vm.selectedIndex = i; onResolve(.inject) }
                                 .onHover { if $0 { vm.selectedIndex = i } }
                         }
                     }
