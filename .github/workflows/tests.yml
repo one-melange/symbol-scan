@@ -12,9 +12,10 @@ concurrency:
 jobs:
   test:
     name: Unit tests (macOS)
-    # SymbolScan targets macOS 26.5, so the runner needs Xcode 26.5+. Pin to `macos-26`
-    # once it's broadly available if `macos-latest` lags behind.
-    runs-on: macos-latest
+    # Pinned to the macOS 26 image (Xcode 26.5) — the same SDK as the dev toolchain.
+    # `macos-latest` is mid-migration and flaps between the macOS 15 and macOS 26 images,
+    # and the macOS 15 image can't run our deployment target.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
