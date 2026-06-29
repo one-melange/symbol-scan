@@ -36,8 +36,6 @@ class OverlayWindowController: NSWindowController {
     /// The app that was frontmost when the overlay appeared, so we can hand focus
     /// back to it before injecting the selected symbol.
     private var previousApp: NSRunningApplication?
-    /// Window-level key monitor that owns arrow/return/esc/tab while the overlay is up.
-    private var keyMonitor: Any?
     /// The view model backing the currently-shown picker (nil while hidden).
     private var viewModel: SymbolPickerViewModel?
 
@@ -70,8 +68,12 @@ class OverlayWindowController: NSWindowController {
         let vm = SymbolPickerViewModel(index: index)
         self.viewModel = vm
 
-        let pickerView = SymbolPickerView(viewModel: vm, trigger: trigger) { [weak self] inject in
-            self?.confirmAndHide(inject: inject)
+        let pickerView = SymbolPickerView(viewModel: vm, trigger: trigger) { [weak self] action in
+            switch action {
+            case .inject:  self?.confirmAndHide(inject: true)
+            case .copy:    self?.confirmAndHide(inject: false)
+            case .dismiss: self?.confirmAndHide(inject: false, dismissOnly: true)
+            }
         }
 
         let hosting = NSHostingView(rootView: pickerView)
@@ -83,12 +85,9 @@ class OverlayWindowController: NSWindowController {
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-
-        installKeyMonitor(vm: vm)
     }
 
     func hide() {
-        removeKeyMonitor()
         window?.orderOut(nil)
         viewModel = nil
     }
@@ -115,30 +114,5 @@ class OverlayWindowController: NSWindowController {
         }
 
         previousApp = nil
-    }
-
-    // MARK: - Key monitor
-
-    private func installKeyMonitor(vm: SymbolPickerViewModel) {
-        removeKeyMonitor() // never stack monitors across repeated show/hide
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self, weak vm] event in
-            guard let self, let vm, self.window?.isKeyWindow == true else { return event }
-
-            switch event.keyCode {
-            case 126: vm.moveSelection(-1); return nil                          // up arrow
-            case 125: vm.moveSelection(+1); return nil                          // down arrow
-            case 36, 76: self.confirmAndHide(inject: true); return nil          // return / keypad enter
-            case 48: self.confirmAndHide(inject: false); return nil             // tab → copy
-            case 53: self.confirmAndHide(inject: false, dismissOnly: true); return nil // esc
-            default: return event                                              // let typing through
-            }
-        }
-    }
-
-    private func removeKeyMonitor() {
-        if let m = keyMonitor {
-            NSEvent.removeMonitor(m)
-            keyMonitor = nil
-        }
     }
 }
