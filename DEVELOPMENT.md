@@ -2,61 +2,47 @@
 
 ## One-time setup
 
-### 1. Shell aliases
+### 1. Stable code signing (keeps the Accessibility grant)
 
-Add these to your `~/.zshrc`:
+SymbolScan needs Accessibility access to run its global `CGEventTap`. macOS ties that
+grant to the app's code signature, so an **ad-hoc** signed build loses the grant on every
+rebuild (the signature's hash changes) and re-prompts each run. Signing with a stable
+**Apple Development** identity fixes this — the grant then persists across rebuilds.
+
+A free Apple ID is enough (no paid Developer Program required):
+
+1. Xcode → **Settings → Accounts → "+" → Apple ID** → sign in. This registers a free
+   **Personal Team**.
+2. Select the **SymbolScan** project → **SymbolScan** target → **Signing & Capabilities** →
+   check **Automatically manage signing** → pick your **(Personal Team)** in the **Team**
+   dropdown. Xcode writes `DEVELOPMENT_TEAM` into the project for you.
+
+Verify a build is properly signed (not ad-hoc):
 
 ```bash
-# Launch SymbolScan (kills any running instance first)
-alias ss="pkill SymbolScan 2>/dev/null; open /Users/pm/Code/symbol-scan/SymbolScan/build/Products/Debug/SymbolScan.app"
-
-# Build SymbolScan from any worktree or subdirectory
-alias ssbuild='xcodebuild -project $(git rev-parse --show-toplevel)/SymbolScan/SymbolScan.xcodeproj -scheme SymbolScan -configuration Debug -derivedDataPath $(git rev-parse --show-toplevel)/SymbolScan/build build 2>&1 | grep -E "(error:|warning:|Build succeeded|Build FAILED)"'
-```
-
-Then reload:
-
-```bash
-source ~/.zshrc
+codesign -dv --verbose=2 SymbolScan/build/Products/Debug/SymbolScan.app
+# expect: Authority=Apple Development: …  and a real TeamIdentifier (not "not set")
 ```
 
 ### 2. Accessibility permission
 
-SymbolScan uses `CGEventTap` to detect `@` and `#` keystrokes globally. This requires Accessibility access — but only needs to be granted once as long as you always launch via `ss`.
+With stable signing in place you grant Accessibility **once** and it survives rebuilds:
 
-**Never use Xcode's Run button (`Cmd+R`)** — it launches the app as a child of Xcode's process, which bypasses accessibility trust and requires re-granting every time.
+1. Build and run from Xcode (`Cmd+R`).
+2. System Settings → Privacy & Security → **Accessibility** → enable **SymbolScan**.
+3. Done — the grant persists across subsequent rebuilds.
 
-To grant:
-1. Run `ss` once from terminal
-2. System Settings → Privacy & Security → Accessibility → enable SymbolScan
-3. Done permanently
-
-### 3. Xcode build location
-
-Build output is set to relative workspace (`SymbolScan/build/`) rather than Xcode's default DerivedData. This keeps the binary path stable across clean builds so accessibility trust is never invalidated.
-
-If you need to reconfigure: Xcode → Settings → Locations → Build Location → Custom → Relative to Workspace, Products: `build/Products`, Intermediates: `build/Intermediates.noindex`.
+> If you ran an ad-hoc build before signing was set up, remove the stale **SymbolScan**
+> entry from the Accessibility list (select it, click "−") and re-grant on the signed build.
 
 ---
 
 ## Daily workflow
 
-### Using Xcode
+Work on a feature branch with Claude Code, then build and run from Xcode:
 
-1. Make changes in Xcode
-2. `Cmd+B` to build
-3. `ss` in terminal to relaunch
-
-### Using Claude Code / worktrees
-
-```bash
-wt claude/your-feature-branch   # switch to worktree
-# ... make changes ...
-ssbuild                          # build from current worktree
-ss                               # relaunch app
-```
-
-`ssbuild` uses `git rev-parse --show-toplevel` to find the project root, so it works correctly from any worktree or subdirectory without modification.
+1. Make changes (in Xcode or via Claude Code on the feature branch).
+2. `Cmd+B` to build, `Cmd+R` to run.
 
 ---
 
@@ -72,17 +58,11 @@ ss                               # relaunch app
 ## Troubleshooting
 
 **CGEventTap not working / keystrokes not detected**
-- Make sure you launched via `ss`, not Xcode's Run button
-- Toggle Accessibility off and back on in System Settings
-- Check console output — if you see `⚠️ Failed to create CGEventTap` the permission isn't active
+- Confirm the build isn't ad-hoc signed (see the `codesign` check above) — an ad-hoc build
+  loses Accessibility trust on each rebuild.
+- Toggle Accessibility off and back on in System Settings.
+- Check console output — if you see `⚠️ Failed to create CGEventTap` the permission isn't active.
 
 **0 symbols indexed**
-- App Sandbox must be disabled — check Signing & Capabilities in Xcode, App Sandbox should not be present
+- App Sandbox must be disabled — check Signing & Capabilities in Xcode, App Sandbox should not be present.
 - Verify the repo has tracked Swift/Python/TS/Rust/Go files: `git ls-files | grep -E "\.(swift|py|ts|rs|go)$"`
-
-**`ss` does nothing**
-- Test directly: `open /Users/pm/Code/symbol-scan/SymbolScan/build/Products/Debug/SymbolScan.app`
-- If that works, reload aliases: `source ~/.zshrc`
-
-**`ssbuild` can't find the project**
-- Make sure you're inside the git repo: `git rev-parse --show-toplevel` should return the repo root

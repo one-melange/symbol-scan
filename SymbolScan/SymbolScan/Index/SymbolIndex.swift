@@ -37,10 +37,16 @@ class SymbolIndex: ObservableObject {
                 collected.append(contentsOf: fileSymbols)
             }
 
-            self.symbols = collected
-            self.symbolCount = collected.count
+            // Drop accidental duplicates (e.g. the same file enumerated twice).
+            var seen = Set<String>()
+            let deduped = collected.filter { sym in
+                seen.insert("\(sym.name)|\(sym.filePath)|\(sym.line)").inserted
+            }
+
+            self.symbols = deduped
+            self.symbolCount = deduped.count
             self.indexedRepoRoot = repoRoot
-            print("✅ Indexed \(collected.count) symbols across \(files.count) files in \(repoRoot.lastPathComponent)")
+            print("✅ Indexed \(deduped.count) symbols across \(files.count) files in \(repoRoot.lastPathComponent)")
         } catch {
             print("❌ Indexing error: \(error)")
         }
@@ -72,7 +78,7 @@ class SymbolIndex: ObservableObject {
             return Array(symbols.prefix(10))
         }
         let q = query.lowercased()
-        return symbols
+        let results = symbols
             .compactMap { sym -> (Symbol, Int)? in
                 let score = fuzzyScore(q, sym.name.lowercased())
                 return score > 0 ? (sym, score) : nil
@@ -80,6 +86,10 @@ class SymbolIndex: ObservableObject {
             .sorted { $0.1 > $1.1 }
             .prefix(10)
             .map(\.0)
+        #if DEBUG
+        print("🔎 search(\"\(query)\") → \(results.count): \(results.map(\.name))")
+        #endif
+        return results
     }
 
     // MARK: - Fuzzy scoring
@@ -92,6 +102,13 @@ class SymbolIndex: ObservableObject {
 
         // Exact prefix
         if candidate.hasPrefix(query) { return 800 }
+
+        // Contiguous substring — rank these above any scattered subsequence match and
+        // guarantee they survive the top-10 cut. Earlier matches score higher.
+        if let r = candidate.range(of: query) {
+            let offset = candidate.distance(from: candidate.startIndex, to: r.lowerBound)
+            return max(700 - offset * 2, 500)
+        }
 
         // Subsequence match with scoring
         var score = 0
