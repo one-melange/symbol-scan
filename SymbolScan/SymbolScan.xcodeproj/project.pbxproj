@@ -25,6 +25,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		8E11A76A2FF2CDB100CA39BD /* SymbolScanTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SymbolScanTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		8E3AEF872FE5A90E00A8E037 /* SymbolScan.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SymbolScan.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		8EDE631E2FE5B2FF0024E0D5 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		8EDE631F2FE5B2FF0024E0D5 /* OverlayWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayWindow.swift; sourceTree = "<group>"; };
@@ -41,7 +42,22 @@
 		8EDE63F22FE5B2FF0024E0D5 /* SymbolPickerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SymbolPickerViewModel.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		8E11A76B2FF2CDB100CA39BD /* SymbolScanTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = SymbolScanTests;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
 /* Begin PBXFrameworksBuildPhase section */
+		8E11A7672FF2CDB100CA39BD /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		8E3AEF842FE5A90E00A8E037 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -58,6 +74,7 @@
 			isa = PBXGroup;
 			children = (
 				8EDE632F2FE5B2FF0024E0D5 /* SymbolScan */,
+				8E11A76B2FF2CDB100CA39BD /* SymbolScanTests */,
 				8E3AEF882FE5A90E00A8E037 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -66,6 +83,7 @@
 			isa = PBXGroup;
 			children = (
 				8E3AEF872FE5A90E00A8E037 /* SymbolScan.app */,
+				8E11A76A2FF2CDB100CA39BD /* SymbolScanTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -133,6 +151,29 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		8E11A7692FF2CDB100CA39BD /* SymbolScanTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 8E11A7702FF2CDB100CA39BD /* Build configuration list for PBXNativeTarget "SymbolScanTests" */;
+			buildPhases = (
+				8E11A7662FF2CDB100CA39BD /* Sources */,
+				8E11A7672FF2CDB100CA39BD /* Frameworks */,
+				8E11A7682FF2CDB100CA39BD /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A11CE5D000000000000000D1 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				8E11A76B2FF2CDB100CA39BD /* SymbolScanTests */,
+			);
+			name = SymbolScanTests;
+			packageProductDependencies = (
+			);
+			productName = SymbolScanTests;
+			productReference = 8E11A76A2FF2CDB100CA39BD /* SymbolScanTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		8E3AEF862FE5A90E00A8E037 /* SymbolScan */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 8E3AEF922FE5A90F00A8E037 /* Build configuration list for PBXNativeTarget "SymbolScan" */;
@@ -156,14 +197,35 @@
 		};
 /* End PBXNativeTarget section */
 
+/* Begin PBXContainerItemProxy section */
+		A11CE5D000000000000000C2 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 8E3AEF7F2FE5A90E00A8E037 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 8E3AEF862FE5A90E00A8E037;
+			remoteInfo = SymbolScan;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+		A11CE5D000000000000000D1 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 8E3AEF862FE5A90E00A8E037 /* SymbolScan */;
+			targetProxy = A11CE5D000000000000000C2 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin PBXProject section */
 		8E3AEF7F2FE5A90E00A8E037 /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 2650;
+				LastSwiftUpdateCheck = 2660;
 				LastUpgradeCheck = 2650;
 				TargetAttributes = {
+					8E11A7692FF2CDB100CA39BD = {
+						CreatedOnToolsVersion = 26.6;
+					};
 					8E3AEF862FE5A90E00A8E037 = {
 						CreatedOnToolsVersion = 26.5;
 					};
@@ -187,11 +249,19 @@
 			projectRoot = "";
 			targets = (
 				8E3AEF862FE5A90E00A8E037 /* SymbolScan */,
+				8E11A7692FF2CDB100CA39BD /* SymbolScanTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		8E11A7682FF2CDB100CA39BD /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		8E3AEF852FE5A90E00A8E037 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -203,6 +273,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		8E11A7662FF2CDB100CA39BD /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		8E3AEF832FE5A90E00A8E037 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -225,6 +302,55 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
+		8E11A76E2FF2CDB100CA39BD /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 6GU7A5AUBS;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = promethiumventures.SymbolScanTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SymbolScan.app/Contents/MacOS/SymbolScan";
+				TEST_TARGET_NAME = SymbolScan;
+			};
+			name = Debug;
+		};
+		8E11A76F2FF2CDB100CA39BD /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 6GU7A5AUBS;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = promethiumventures.SymbolScanTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SymbolScan.app/Contents/MacOS/SymbolScan";
+				TEST_TARGET_NAME = SymbolScan;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
 		8E3AEF902FE5A90F00A8E037 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -278,7 +404,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -335,7 +461,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = macosx;
@@ -408,6 +534,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		8E11A7702FF2CDB100CA39BD /* Build configuration list for PBXNativeTarget "SymbolScanTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8E11A76E2FF2CDB100CA39BD /* Debug */,
+				8E11A76F2FF2CDB100CA39BD /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		8E3AEF822FE5A90E00A8E037 /* Build configuration list for PBXProject "SymbolScan" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

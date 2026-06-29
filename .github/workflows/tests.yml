@@ -1,0 +1,44 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Unit tests (macOS)
+    # Pinned to the macOS 26 image (Xcode 26.5) — the same SDK as the dev toolchain.
+    # `macos-latest` is mid-migration and flaps between the macOS 15 and macOS 26 images,
+    # and the macOS 15 image can't run our deployment target.
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Xcode version
+        run: xcodebuild -version
+
+      - name: Run tests
+        working-directory: SymbolScan
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -scheme SymbolScan \
+            -destination 'platform=macOS' \
+            -resultBundlePath TestResults.xcresult \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM=""
+
+      - name: Upload test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: SymbolScan/TestResults.xcresult
+          if-no-files-found: ignore
