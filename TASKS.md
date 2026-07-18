@@ -24,7 +24,6 @@ _(nothing in progress)_
 ### Tier 1 — Correctness (verified bugs)
 
 - [ ] (T1) Hardcoded repo path — app only works on one machine; indexes a fixed path every launch · `SymbolScan/SymbolScan/App/AppDelegate.swift:41` (ties to T3)
-- [ ] (T2) Path-truncation / dead `relPath` — every symbol stores a bare filename, not its repo-relative path · `SymbolScan/SymbolScan/Index/SymbolIndex.swift:35` + `Index/RegexParser.swift:11`. Fix: thread `relPath` into the `parse(source:language:path:)` overload (already used correctly by `reindexFile`).
 
 ### Tier 2 — Core features / robustness
 
@@ -52,4 +51,4 @@ Recommended execution order: **T3 (with T1) → T4 → T7 → T16 → T5.**
 
 ## Done
 
-_(nothing yet)_
+- [x] (T2) Path-truncation / dead `relPath` — the initial index stored a bare filename instead of the repo-relative path. Fixed by giving `RegexParser.parse(url:language:relativePath:)` an explicit relative path and threading the already-computed `relPath` in at both call sites; dropped `reindexFile`'s now-redundant re-stamp · `SymbolScan/SymbolScan/Index/SymbolIndex.swift` + `Index/RegexParser.swift` (branch `t2_fix`)
