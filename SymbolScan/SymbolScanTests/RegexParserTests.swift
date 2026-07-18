@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import SymbolScan
 
@@ -104,5 +105,20 @@ import Testing
 
     @Test func emptySourceYieldsNothing() {
         #expect(RegexParser.parse(source: "", language: .swift, path: "f").isEmpty)
+    }
+
+    /// The URL overload must stamp symbols with the caller-supplied relative path — not the
+    /// bare filename (regression for T2: path-truncation / dead `relPath`).
+    @Test func urlOverloadThreadsRelativePath() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("SymbolScanTest-\(UUID().uuidString).swift")
+        try "func hello() {}".write(to: tmp, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let relativePath = "a/b/c.swift"
+        let symbols = try RegexParser.parse(url: tmp, language: .swift, relativePath: relativePath)
+
+        #expect(!symbols.isEmpty)
+        #expect(symbols.allSatisfy { $0.filePath == relativePath })
     }
 }
