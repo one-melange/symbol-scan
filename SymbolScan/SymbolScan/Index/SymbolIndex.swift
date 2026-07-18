@@ -33,7 +33,7 @@ class SymbolIndex: ObservableObject {
             for url in files {
                 guard let lang = Language.detect(from: url) else { continue }
                 let relPath = s.relativePath(for: url)
-                let fileSymbols = (try? RegexParser.parse(url: url, language: lang)) ?? []
+                let fileSymbols = (try? RegexParser.parse(url: url, language: lang, relativePath: relPath)) ?? []
                 collected.append(contentsOf: fileSymbols)
             }
 
@@ -61,11 +61,8 @@ class SymbolIndex: ObservableObject {
         symbols.removeAll { $0.filePath == relPath }
 
         // Re-parse
-        if let fresh = try? RegexParser.parse(url: url, language: lang) {
-            let stamped = fresh.map { sym in
-                Symbol(name: sym.name, kind: sym.kind, filePath: relPath, line: sym.line, signature: sym.signature)
-            }
-            symbols.append(contentsOf: stamped)
+        if let fresh = try? RegexParser.parse(url: url, language: lang, relativePath: relPath) {
+            symbols.append(contentsOf: fresh)
             symbolCount = symbols.count
         }
     }

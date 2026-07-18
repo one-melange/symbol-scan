@@ -6,9 +6,8 @@ import Foundation
 /// Swap in Tree-sitter later per file if you want higher fidelity.
 struct RegexParser {
 
-    static func parse(url: URL, language: Language) throws -> [Symbol] {
+    static func parse(url: URL, language: Language, relativePath: String) throws -> [Symbol] {
         let content = try String(contentsOf: url, encoding: .utf8)
-        let relativePath = url.lastPathComponent // caller should pass full relative path
         return parse(source: content, language: language, path: relativePath)
     }
 
