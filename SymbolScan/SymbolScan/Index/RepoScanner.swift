@@ -111,3 +111,64 @@ class RepoScanner {
             : url.path
     }
 }
+
+// MARK: - Repo preference persistence
+
+/// Persists which repo is active and a short list of recently-used repos, as plain paths in
+/// `UserDefaults`. Lives here (rather than its own file) so it builds without a project-file edit
+/// — same rationale as `SymbolMatcher` in SymbolIndex.swift.
+///
+/// The app is unsandboxed (`ENABLE_APP_SANDBOX = NO`), so a bare path round-trips fine. If the app
+/// is ever sandboxed this must switch to a security-scoped bookmark, or restored paths will fail to
+/// open. The decision logic (empty/whitespace/missing/not-a-directory) is kept in the pure
+/// `decodePath` (existence injected) so it unit-tests without touching disk.
+enum RepoPreference {
+    static let activeKey = "SymbolScan.activeRepoPath"
+    static let recentsKey = "SymbolScan.recentRepoPaths"
+    static let recentsLimit = 8
+
+    /// Pure: turn a stored path into a usable directory URL, or nil if it's blank or no longer a
+    /// directory. `isDirectory` is injected so tests need no filesystem.
+    static func decodePath(_ stored: String?, isDirectory: (String) -> Bool) -> URL? {
+        guard let stored else { return nil }
+        let trimmed = stored.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, isDirectory(trimmed) else { return nil }
+        return URL(fileURLWithPath: trimmed)
+    }
+
+    private static func dirExists(_ path: String) -> Bool {
+        var isDir: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
+    }
+
+    static func loadActive(from d: UserDefaults = .standard) -> URL? {
+        decodePath(d.string(forKey: activeKey), isDirectory: dirExists)
+    }
+
+    static func loadRecents(from d: UserDefaults = .standard) -> [URL] {
+        let paths = d.stringArray(forKey: recentsKey) ?? []
+        return paths.compactMap { decodePath($0, isDirectory: dirExists) }
+    }
+
+    /// Make `url` the active repo and push it onto the front of the recents list (de-duplicated,
+    /// most-recent-first, capped at `recentsLimit`).
+    static func setActive(_ url: URL, in d: UserDefaults = .standard) {
+        let path = url.path
+        d.set(path, forKey: activeKey)
+
+        var paths = d.stringArray(forKey: recentsKey) ?? []
+        paths.removeAll { $0 == path }
+        paths.insert(path, at: 0)
+        if paths.count > recentsLimit { paths = Array(paths.prefix(recentsLimit)) }
+        d.set(paths, forKey: recentsKey)
+    }
+
+    /// Drop a repo (e.g. one that was deleted/moved) from both the active slot and recents.
+    static func clear(_ url: URL, from d: UserDefaults = .standard) {
+        let path = url.path
+        if d.string(forKey: activeKey) == path { d.removeObject(forKey: activeKey) }
+        var paths = d.stringArray(forKey: recentsKey) ?? []
+        paths.removeAll { $0 == path }
+        d.set(paths, forKey: recentsKey)
+    }
+}
