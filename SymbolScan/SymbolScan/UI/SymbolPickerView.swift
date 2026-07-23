@@ -2,9 +2,11 @@ import SwiftUI
 
 /// How the picker resolved — drives what the controller does on close.
 enum PickerAction {
-    case inject   // insert the selected symbol into the source app
-    case copy     // copy the selected symbol to the clipboard
-    case dismiss  // close without selecting
+    case inject      // insert the selected symbol into the source app
+    case copy        // copy the selected symbol to the clipboard
+    case dismiss     // close without selecting
+    case chooseRepo  // open the directory picker to index a different repo
+    case reindex     // rescan the active repo
 }
 
 struct SymbolPickerView: View {
@@ -122,6 +124,12 @@ struct SymbolPickerView: View {
             Text("esc dismiss")
                 .font(.system(size: 10))
                 .foregroundStyle(.quaternary)
+            Text("⌘O repo")
+                .font(.system(size: 10))
+                .foregroundStyle(.quaternary)
+            Text("⌘Q quit")
+                .font(.system(size: 10))
+                .foregroundStyle(.quaternary)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 7)
@@ -131,14 +139,22 @@ struct SymbolPickerView: View {
     // MARK: - Empty state
 
     private var emptyState: some View {
-        VStack(spacing: 6) {
-            Text(index.symbolCount == 0 ? "No repo indexed" : "No results for \"\(vm.query)\"")
+        let copy = PickerEmptyState.copy(
+            repoRoot: index.indexedRepoRoot,
+            symbolCount: index.symbolCount,
+            isIndexing: index.isIndexing,
+            query: vm.query,
+            error: index.lastIndexError
+        )
+        return VStack(spacing: 6) {
+            Text(copy.title)
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
-            if index.symbolCount == 0 {
-                Text("Index a repo via the menu bar icon")
+            if let hint = copy.hint {
+                Text(hint)
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
+                    .multilineTextAlignment(.center)
             }
         }
         .frame(maxWidth: .infinity)
@@ -280,5 +296,40 @@ struct SymbolRow: View {
         case .enum, .trait, .interface:   return .orange
         case .constant, .variable, .type: return .green
         }
+    }
+}
+
+// MARK: - Empty-state copy
+
+/// Pure derivation of the picker's empty-state text from index state. Kept off the view (and off
+/// `@MainActor`) so it can be unit-tested — including a regression guard that the "no repo" case
+/// points at a real affordance (⌘O / the menu-bar icon), unlike the old hardcoded copy which
+/// referenced a menu-bar icon that didn't exist.
+enum PickerEmptyState {
+    struct Copy: Equatable {
+        let title: String
+        let hint: String?
+    }
+
+    static func copy(repoRoot: URL?,
+                     symbolCount: Int,
+                     isIndexing: Bool,
+                     query: String,
+                     error: String?) -> Copy {
+        if let error {
+            let name = repoRoot?.lastPathComponent
+            return Copy(title: name.map { "Couldn't index \($0)" } ?? "Couldn't index repo",
+                        hint: error)
+        }
+        if isIndexing {
+            let name = repoRoot?.lastPathComponent
+            return Copy(title: name.map { "Indexing \($0)…" } ?? "Indexing…", hint: nil)
+        }
+        if repoRoot == nil {
+            return Copy(title: "No repo selected",
+                        hint: "Press ⌘O or use the menu-bar icon to choose a repo")
+        }
+        // A repo is active but the current query matches nothing (or it's genuinely empty).
+        return Copy(title: "No results for \"\(query)\"", hint: nil)
     }
 }

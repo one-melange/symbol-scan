@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Symbol
 
-struct Symbol: Identifiable, Hashable {
+struct Symbol: Identifiable, Hashable, Codable {
     let id: UUID
     let name: String
     let kind: SymbolKind
@@ -28,7 +28,7 @@ struct Symbol: Identifiable, Hashable {
 
 // MARK: - Symbol Kind
 
-enum SymbolKind: String, CaseIterable {
+enum SymbolKind: String, CaseIterable, Codable {
     case function   = "func"
     case method     = "method"
     case `class`    = "class"
