@@ -29,6 +29,37 @@ class RepoScanner {
         return files
     }
 
+    /// Every tracked + untracked (non-ignored) file — any type, not just parseable source —
+    /// as repo-root-relative paths. Used to build the file/directory index entries (T18).
+    /// Same enumeration as `enumerateSourceFiles`, minus the language filter.
+    func enumerateAllFiles() async throws -> [String] {
+        if isGitRepo, let paths = try? await gitLsFilesRaw() {
+            print("📂 enumerateAllFiles: git ls-files → \(paths.count) files")
+            return paths
+        }
+        let paths = fileManagerWalkRaw()
+        print("📂 enumerateAllFiles: FileManager fallback → \(paths.count) files")
+        return paths
+    }
+
+    /// All ancestor directory paths (repo-root-relative) implied by `filePaths`. Pure so it is
+    /// unit-testable and honors whatever gitignore already pruned from `filePaths`.
+    /// E.g. `["a/b/c.txt", "a/d.txt"]` → `["a", "a/b"]`.
+    static func directories(for filePaths: [String]) -> [String] {
+        var dirs = Set<String>()
+        for path in filePaths {
+            var comps = path.split(separator: "/").map(String.init)
+            guard comps.count > 1 else { continue }   // top-level file → no parent directory
+            comps.removeLast()                         // drop the filename
+            var prefix: [String] = []
+            for c in comps {
+                prefix.append(c)
+                dirs.insert(prefix.joined(separator: "/"))
+            }
+        }
+        return dirs.sorted()
+    }
+
     /// Directory names we never want to descend into — build output, dependency
     /// checkouts, VCS metadata. Protects the FileManager fallback (gitLsFiles already
     /// honors .gitignore, so these are excluded there automatically).
@@ -37,7 +68,8 @@ class RepoScanner {
         "node_modules", "Pods", ".git"
     ]
 
-    private func gitLsFiles() async throws -> [URL] {
+    /// Raw `git ls-files` output as repo-root-relative paths, unfiltered by language.
+    private func gitLsFilesRaw() async throws -> [String] {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = [
@@ -50,23 +82,33 @@ class RepoScanner {
 
         let pipe = Pipe()
         process.standardOutput = pipe
-        process.standardError = Pipe() // suppress stderr
+        process.standardError = FileHandle.nullDevice // discard stderr (an unread pipe can also deadlock)
 
         print("🔍 Running git ls-files in: \(root.path)")
-        print("🔍 git path: \(process.executableURL?.path ?? "nil")")
         try process.run()
+
+        // Drain stdout to EOF *before* waiting. git's output on a large repo (tens of thousands of
+        // files → megabytes) far exceeds the ~64KB OS pipe buffer; if we `waitUntilExit()` first,
+        // git blocks writing to a full pipe while we block waiting for it to exit — a deadlock that
+        // hung indexing forever on big repos. Reading to EOF drains the pipe as git writes.
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
 
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
         guard let output = String(data: data, encoding: .utf8) else { return [] }
 
         return output
             .split(separator: "\n")
-            .map { root.appendingPathComponent(String($0)) }
+            .map(String.init)
+    }
+
+    private func gitLsFiles() async throws -> [URL] {
+        try await gitLsFilesRaw()
+            .map { root.appendingPathComponent($0) }
             .filter { Language.detect(from: $0) != nil }
     }
 
-    private func fileManagerWalk() -> [URL] {
+    /// Raw FileManager walk as repo-root-relative paths of regular files, unfiltered by language.
+    private func fileManagerWalkRaw() -> [String] {
         let fm = FileManager.default
         guard let enumerator = fm.enumerator(
             at: root,
@@ -74,18 +116,26 @@ class RepoScanner {
             options: [.skipsHiddenFiles, .skipsPackageDescendants]
         ) else { return [] }
 
-        var results: [URL] = []
+        var results: [String] = []
         for case let url as URL in enumerator {
             // Skip whole excluded subtrees (build output, dependency checkouts, etc.)
             if url.pathComponents.contains(where: { RepoScanner.excludedDirs.contains($0) }) {
                 enumerator.skipDescendants()
                 continue
             }
-            if Language.detect(from: url) != nil {
-                results.append(url)
+            // Regular files only — directories are derived separately via `directories(for:)`.
+            let isRegular = (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile
+            if isRegular == true {
+                results.append(relativePath(for: url))
             }
         }
         return results
+    }
+
+    private func fileManagerWalk() -> [URL] {
+        fileManagerWalkRaw()
+            .map { root.appendingPathComponent($0) }
+            .filter { Language.detect(from: $0) != nil }
     }
 
     // MARK: - Repo root detection
@@ -104,11 +154,15 @@ class RepoScanner {
         return nil
     }
 
-    /// Returns relative path from repo root.
+    /// Returns relative path from repo root. Symlinks are resolved on both sides so the
+    /// `/var` → `/private/var` (and `/tmp` → `/private/tmp`) aliasing macOS applies to
+    /// `FileManager.enumerator` URLs doesn't defeat the prefix match and leak absolute paths.
     func relativePath(for url: URL) -> String {
-        url.path.hasPrefix(root.path)
-            ? String(url.path.dropFirst(root.path.count + 1))
-            : url.path
+        let rootPath = root.resolvingSymlinksInPath().path
+        let urlPath = url.resolvingSymlinksInPath().path
+        return urlPath.hasPrefix(rootPath + "/")
+            ? String(urlPath.dropFirst(rootPath.count + 1))
+            : urlPath
     }
 }
 

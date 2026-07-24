@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Combine
 
 @main
 struct OverlayApp: App {
@@ -27,9 +28,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         requestPermissions()
+        IndexNotifier.requestAuthorization()   // one-time banner permission prompt
 
         let index = SymbolIndex()
         symbolIndex = index
+        // A restored/recent repo that turns out not to be a usable git repo forgets itself, so we
+        // don't keep retrying a dead path every launch.
+        index.onRepoInvalid = { url in RepoPreference.clear(url) }
         let controller = OverlayWindowController(index: index)
         overlayWindowController = controller
         controller.onChooseRepo = { [weak self] in self?.chooseRepo() }
@@ -48,16 +53,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         eventTap?.start()
 
-        // Restore the last active repo. If a cache exists it loads instantly; otherwise it scans.
+        // Restore the last active repo. If a cache exists it loads instantly; otherwise it scans in
+        // the background (non-blocking). A dead/non-git path is forgotten via `onRepoInvalid`.
         if let active = RepoPreference.loadActive() {
-            Task { [weak self] in
-                await self?.symbolIndex?.activateRepo(active)
-                // If activation left us with no index, the repo is gone/invalid — forget it so we
-                // don't keep retrying a dead path every launch.
-                if self?.symbolIndex?.indexedRepoRoot == nil {
-                    RepoPreference.clear(active)
-                }
-            }
+            index.activateRepo(active)
         }
     }
 
@@ -77,19 +76,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
         RepoPreference.setActive(url)
-        Task { [weak self] in await self?.symbolIndex?.activateRepo(url) }
+        symbolIndex?.activateRepo(url)
     }
 
     /// Rescan the active repo from scratch (bypassing the cache).
     private func reindex() {
         guard let root = symbolIndex?.indexedRepoRoot ?? RepoPreference.loadActive() else { return }
-        Task { [weak self] in await self?.symbolIndex?.reindex(root) }
+        symbolIndex?.reindex(root)
     }
 
     /// Switch to an already-known repo (from the recents menu).
     private func switchTo(_ url: URL) {
         RepoPreference.setActive(url)
-        Task { [weak self] in await self?.symbolIndex?.activateRepo(url) }
+        symbolIndex?.activateRepo(url)
     }
 
     private func requestPermissions() {
@@ -121,6 +120,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let onReindex: () -> Void
     private let onSwitch: (URL) -> Void
     private let statusItem: NSStatusItem
+    private var cancellables = Set<AnyCancellable>()
 
     init(index: SymbolIndex,
          onChooseRepo: @escaping () -> Void,
@@ -145,7 +145,16 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             menu.autoenablesItems = false
             menu.delegate = self
             statusItem.menu = menu
+            refreshStatusButton()   // initial tooltip
         }
+
+        // Keep the menu-bar icon/tooltip live as the active repo indexes/finishes, without needing
+        // to open the menu. `objectWillChange` fires before the value settles, so hop to the next
+        // runloop turn (by which point `isIndexing`/`symbolCount` reflect the new state).
+        index.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] in self?.refreshStatusButton() }
+            .store(in: &cancellables)
 
         // A full menu bar (e.g. behind a MacBook notch) makes macOS hide overflow items with no
         // API to force placement. Detect it and tell the user about the keyboard fallbacks.
@@ -158,6 +167,16 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             Use the picker overlay instead: ⌘O choose repo, ⌘R reindex, ⌘Q quit.
             """)
         }
+    }
+
+    /// Reflect the active repo's state in the menu-bar button's tooltip so progress is visible on
+    /// hover without opening the menu. Tooltip-only on purpose: mutating the button *image* live
+    /// forces a status-bar relayout that can re-enter layout (`_NSDetectedLayoutRecursion`).
+    private func refreshStatusButton() {
+        statusItem.button?.toolTip = StatusMenuModel.title(repo: index.indexedRepoRoot,
+                                                           count: index.symbolCount,
+                                                           isIndexing: index.isIndexing,
+                                                           error: index.lastIndexError)
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {

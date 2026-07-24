@@ -1,5 +1,5 @@
 {
-  "originHash" : "08f62b3af86c75cd602b102480bc90ed67e22941fe22f79226237b83d4c99310",
+  "originHash" : "c2f047065b20fab1f71e23ddc2c7b71a60cfe3bb1611a431d9ef918ffd5c1ac4",
   "pins" : [
     {
       "identity" : "swift-tree-sitter",
@@ -17,6 +17,50 @@
       "state" : {
         "revision" : "da6fe9beb4f7f67beb75914ca8e0d48ae48d6406",
         "version" : "0.25.10"
+      }
+    },
+    {
+      "identity" : "tree-sitter-go",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/tree-sitter/tree-sitter-go",
+      "state" : {
+        "revision" : "3c3775faa968158a8b4ac190a7fda867fd5fb748",
+        "version" : "0.23.4"
+      }
+    },
+    {
+      "identity" : "tree-sitter-python",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/tree-sitter/tree-sitter-python",
+      "state" : {
+        "revision" : "bffb65a8cfe4e46290331dfef0dbf0ef3679de11",
+        "version" : "0.23.6"
+      }
+    },
+    {
+      "identity" : "tree-sitter-rust",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/tree-sitter/tree-sitter-rust",
+      "state" : {
+        "revision" : "77a3747266f4d621d0757825e6b11edcbf991ca5",
+        "version" : "0.24.2"
+      }
+    },
+    {
+      "identity" : "tree-sitter-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/alex-pinkus/tree-sitter-swift",
+      "state" : {
+        "revision" : "31d17fe7e818a2048c808b5c6fdc2dc792f4f5b5"
+      }
+    },
+    {
+      "identity" : "tree-sitter-typescript",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/tree-sitter/tree-sitter-typescript",
+      "state" : {
+        "revision" : "f975a621f4e7f532fe322e13c4f79495e0a7b2e7",
+        "version" : "0.23.2"
       }
     }
   ],

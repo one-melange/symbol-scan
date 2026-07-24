@@ -273,14 +273,16 @@ struct SymbolRow: View {
 
             Spacer()
 
-            // File path + line
+            // File path + line (line is synthetic/0 for file & directory entries, so hide it there)
             VStack(alignment: .trailing, spacing: 1) {
                 Text(symbol.displayPath)
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(.secondary)
-                Text(":\(symbol.line)")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.tertiary)
+                if symbol.kind != .file && symbol.kind != .directory {
+                    Text(":\(symbol.line)")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                }
             }
         }
         .padding(.horizontal, 14)
@@ -295,6 +297,7 @@ struct SymbolRow: View {
         case .class, .struct:             return .purple
         case .enum, .trait, .interface:   return .orange
         case .constant, .variable, .type: return .green
+        case .file, .directory:           return .gray
         }
     }
 }

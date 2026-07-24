@@ -33,9 +33,16 @@ final class SymbolPickerViewModel: ObservableObject {
         selectedIndex = (selectedIndex + delta + results.count) % results.count
     }
 
-    /// The name of the currently selected symbol, or nil if nothing is selected.
-    func selectedSymbolName() -> String? {
+    /// The currently selected symbol, or nil if nothing is selected.
+    func selectedSymbol() -> Symbol? {
         guard selectedIndex < results.count else { return nil }
-        return results[selectedIndex].name
+        return results[selectedIndex]
+    }
+
+    /// The exact text to inject/copy for the current selection, or nil if nothing is selected.
+    /// Composition (path + name for code symbols, name + parent dir for files/dirs) lives on
+    /// `Symbol.injectionText` so it stays pure and testable.
+    func selectedInjectionText() -> String? {
+        selectedSymbol()?.injectionText
     }
 }
