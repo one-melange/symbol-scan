@@ -82,14 +82,18 @@ class RepoScanner {
 
         let pipe = Pipe()
         process.standardOutput = pipe
-        process.standardError = Pipe() // suppress stderr
+        process.standardError = FileHandle.nullDevice // discard stderr (an unread pipe can also deadlock)
 
         print("🔍 Running git ls-files in: \(root.path)")
-        print("🔍 git path: \(process.executableURL?.path ?? "nil")")
         try process.run()
+
+        // Drain stdout to EOF *before* waiting. git's output on a large repo (tens of thousands of
+        // files → megabytes) far exceeds the ~64KB OS pipe buffer; if we `waitUntilExit()` first,
+        // git blocks writing to a full pipe while we block waiting for it to exit — a deadlock that
+        // hung indexing forever on big repos. Reading to EOF drains the pipe as git writes.
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
 
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
         guard let output = String(data: data, encoding: .utf8) else { return [] }
 
         return output
