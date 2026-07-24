@@ -29,8 +29,11 @@ import Foundation
     // MARK: - injectionText (T17 / T18)
 
     @Test func injectionTextForCodeSymbolIsPathLineName() {
+        // Body only — no leading `@`. The prefix comes from the trigger the user typed (`@`/`#`
+        // pass through to the app) or is supplied by the overlay for ⌘⇧O; baking it in here would
+        // double the marker (`@@…`).
         let sym = Symbol(name: "search", kind: .method, filePath: "Index/SymbolIndex.swift", line: 105)
-        #expect(sym.injectionText == "@Index/SymbolIndex.swift:105 search")
+        #expect(sym.injectionText == "Index/SymbolIndex.swift:105 search")
     }
 
     @Test func injectionTextForFileIsNameThenParentDir() {

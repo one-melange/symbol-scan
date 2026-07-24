@@ -71,7 +71,9 @@ import Testing
             Symbol(name: "search", kind: .function, filePath: "Index/SymbolIndex.swift", line: 105)
         ])
         let vm = SymbolPickerViewModel(index: index)
-        #expect(vm.selectedInjectionText() == "@Index/SymbolIndex.swift:105 search")
+        // Body only — the leading `@`/`#` prefix comes from the trigger key the user typed
+        // (or is supplied by the overlay for ⌘⇧O), not from injectionText.
+        #expect(vm.selectedInjectionText() == "Index/SymbolIndex.swift:105 search")
     }
 
     @Test func selectedInjectionTextNilWhenNoResults() {

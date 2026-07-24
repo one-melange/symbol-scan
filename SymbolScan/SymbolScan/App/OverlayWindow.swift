@@ -59,6 +59,9 @@ class OverlayWindowController: NSWindowController {
     private var previousApp: NSRunningApplication?
     /// The view model backing the currently-shown picker (nil while hidden).
     private var viewModel: SymbolPickerViewModel?
+    /// The trigger that opened the current picker — determines the injected prefix (see
+    /// `injectionPrefix`).
+    private var currentTrigger: EventTap.Trigger?
 
     /// Invoked when the user asks to choose a different repo (⌘O or the in-picker action).
     var onChooseRepo: (() -> Void)?
@@ -103,6 +106,7 @@ class OverlayWindowController: NSWindowController {
 
         let vm = SymbolPickerViewModel(index: index)
         self.viewModel = vm
+        self.currentTrigger = trigger
 
         let pickerView = SymbolPickerView(viewModel: vm, trigger: trigger) { [weak self] action in
             switch action {
@@ -141,10 +145,24 @@ class OverlayWindowController: NSWindowController {
 
     /// Resolve the picker: inject the selected symbol, copy it, or just dismiss.
     /// Called from both the key monitor and SwiftUI tap gestures.
+    /// The prefix marker to prepend to the injected reference. For the `@`/`#` triggers the user
+    /// already typed the marker into the target app (EventTap passes those keys through), so we add
+    /// nothing — otherwise we'd double it (`@@…`). The `⌘⇧O` trigger types nothing, so we supply a
+    /// leading `@` to match the same reference shape.
+    private func injectionPrefix(for trigger: EventTap.Trigger?) -> String {
+        switch trigger {
+        case .at, .hash: return ""     // already in the buffer
+        default:         return "@"    // ⌘⇧O (or unknown) — nothing was typed
+        }
+    }
+
     private func confirmAndHide(inject: Bool, dismissOnly: Bool = false) {
-        // The composed reference (path + name for code symbols, name + parent dir for files/
-        // directories) rather than the bare name — see `Symbol.injectionText`.
-        let text = dismissOnly ? nil : viewModel?.selectedInjectionText()
+        // The composed reference body (path + name for code symbols, name + parent dir for files/
+        // directories) rather than the bare name — see `Symbol.injectionText` — with the
+        // trigger-appropriate prefix so we don't duplicate the `@`/`#` the user already typed.
+        let text = dismissOnly
+            ? nil
+            : viewModel?.selectedInjectionText().map { injectionPrefix(for: currentTrigger) + $0 }
 
         if inject, let text {
             hide()
