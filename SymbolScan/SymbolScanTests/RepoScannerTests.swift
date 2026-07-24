@@ -59,4 +59,33 @@ import Foundation
         #expect(!names.contains("readme.md"))   // unknown language
         #expect(!names.contains("dep.swift"))   // excluded directory
     }
+
+    @Test func enumerateAllFilesKeepsNonSourceButHonorsExclusions() async throws {
+        let base = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let nodeModules = base.appendingPathComponent("node_modules")
+        try FileManager.default.createDirectory(at: nodeModules, withIntermediateDirectories: true)
+        let src = base.appendingPathComponent("src")
+        try FileManager.default.createDirectory(at: src, withIntermediateDirectories: true)
+
+        try "func a() {}".write(to: src.appendingPathComponent("a.swift"), atomically: true, encoding: .utf8)
+        try "# notes".write(to: base.appendingPathComponent("readme.md"), atomically: true, encoding: .utf8)
+        try "junk".write(to: nodeModules.appendingPathComponent("dep.swift"), atomically: true, encoding: .utf8)
+
+        // No .git in this temp dir → exercises the FileManager fallback path.
+        let paths = Set(try await RepoScanner(root: base).enumerateAllFiles())
+        #expect(paths.contains("src/a.swift"))
+        #expect(paths.contains("readme.md"))         // non-source file kept (unlike enumerateSourceFiles)
+        #expect(!paths.contains("node_modules/dep.swift"))  // excluded directory still pruned
+    }
+
+    @Test func directoriesDerivesAllAncestorPrefixes() {
+        let dirs = RepoScanner.directories(for: [
+            "a/b/c.txt",
+            "a/d.txt",
+            "top.txt",          // top-level file → contributes no directory
+            "x/y/z/deep.swift",
+        ])
+        #expect(dirs == ["a", "a/b", "x", "x/y", "x/y/z"])
+    }
 }
