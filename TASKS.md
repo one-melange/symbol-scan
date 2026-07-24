@@ -23,12 +23,11 @@ _(nothing in progress)_
 
 ### Tier 2 — Core features / robustness
 
-Recommended execution order: **T4 → T7 → T16.**
+Recommended execution order: **T4 → T7.**
 
 - [ ] (T4) Incremental reindex on save — `SymbolIndex.reindexFile` exists but has no callers; wire up a file watcher or remove the dead method · `SymbolScan/SymbolScan/Index/SymbolIndex.swift` (note: should also refresh the `IndexCache` on-disk cache)
 - [ ] (T7) RepoScanner robustness — add a file-size cap, expand excluded dirs (`target/`, `vendor/`, `__pycache__/`, `.next/`, …), handle symlinks · `SymbolScan/SymbolScan/Index/RepoScanner.swift`
-- [ ] (T16) Tree-sitter parsing — replace the regex extractor with Tree-sitter grammars for accurate cross-language symbols (no brittle indentation heuristics, easy new-language support). Keep the `parse(source:language:path:)` boundary + `Symbol`/`SymbolKind` stable so it's an internal swap; consider a per-language rollout with regex fallback. Pulls in native grammar dylibs (SwiftPM/Xcode + code-signing + CI changes). **Largely subsumes T8.** · `SymbolScan/SymbolScan/Index/RegexParser.swift` (→ new parser layer) + build/CI
-- [ ] (T8) Language coverage — **superseded by T16** (JS/JSX, Python `@property`/decorated methods, method-vs-function detection all fall out of a real parse tree); keep only as a regex fallback if T16 slips · `SymbolScan/SymbolScan/Index/RegexParser.swift`
+- [ ] (T8) Language coverage — **superseded by T16** (now landed); the Tree-sitter parser distinguishes method-vs-function via ancestry and adds Go struct/interface/alias, Rust impl methods, etc. Remaining gap: JS/JSX (`.js`/`.jsx` not in `Language.detect`). Reopen only for that · `SymbolScan/SymbolScan/Index/TreeSitterParser.swift`
 
 ## Later
 
@@ -45,6 +44,7 @@ Recommended execution order: **T4 → T7 → T16.**
 
 ## Done
 
+- [x] (T16) Tree-sitter parsing — replaced the regex extractor with real Tree-sitter grammars (Swift, Python, TypeScript, Rust, Go) behind a new `TreeSitterParser` + `SymbolParser` facade that keeps the `parse(source:language:path:)` boundary and falls back to `RegexParser` on any grammar/parse/query failure. Method-vs-function is now decided by node ancestry (not indentation); Go struct/interface/alias and Swift class/struct/enum/actor/protocol are disambiguated from the parse tree. Five grammar SwiftPM packages added to `project.pbxproj` (Swift pinned by revision to the `-with-generated-files` tag; others by exact version) and linked **statically** (no dylib signing); removed the machine-specific `HEADER_SEARCH_PATHS`. `IndexCache.version` bumped 2→3. `RegexParser` retained as fallback + its tests · `SymbolScan/SymbolScan/Index/TreeSitterParser.swift` + build · branch `tree_sitter`
 - [x] (T17) Path injection — picking a **code symbol** now injects the file reference plus the name as `@<relativePath>:<line> <name>` (e.g. `@Index/SymbolIndex.swift:105 search`) instead of the bare name; composition lives in the pure, tested `Symbol.injectionText`, consumed by `SymbolPickerViewModel.selectedInjectionText()` and `OverlayWindowController.confirmAndHide` (used for both inject and Tab-copy) · branch `tree_sitter`
 - [x] (T18) Directory and file recognition — every git-tracked file (any type) and every directory is now indexed as a searchable/injectable entry (`SymbolKind.file` / `.directory`); a file injects `<filename> <parent dir>` and a directory injects `<dir name> <parent dir>`. `RepoScanner.enumerateAllFiles()` (unfiltered git ls-files / FileManager walk) + `RepoScanner.directories(for:)` feed `SymbolIndex.reindex`; `IndexCache.version` bumped 1→2 to drop stale caches. Also fixed a latent `relativePath` symlink-aliasing bug (`/var`↔`/private/var`) · branch `tree_sitter`
 

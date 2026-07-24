@@ -62,7 +62,7 @@ class SymbolIndex: ObservableObject {
             for url in files {
                 guard let lang = Language.detect(from: url) else { continue }
                 let relPath = s.relativePath(for: url)
-                let fileSymbols = (try? RegexParser.parse(url: url, language: lang, relativePath: relPath)) ?? []
+                let fileSymbols = (try? SymbolParser.parse(url: url, language: lang, relativePath: relPath)) ?? []
                 collected.append(contentsOf: fileSymbols)
             }
 
@@ -105,7 +105,7 @@ class SymbolIndex: ObservableObject {
         symbols.removeAll { $0.filePath == relPath }
 
         // Re-parse
-        if let fresh = try? RegexParser.parse(url: url, language: lang, relativePath: relPath) {
+        if let fresh = try? SymbolParser.parse(url: url, language: lang, relativePath: relPath) {
             symbols.append(contentsOf: fresh)
             symbolCount = symbols.count
         }
@@ -194,8 +194,9 @@ enum SymbolMatcher {
 /// the filesystem.
 enum IndexCache {
     /// Bump when the payload shape changes; a mismatch makes `decode` return nil → forces a rescan.
-    /// v2: added `.file`/`.directory` entries (T18), so v1 caches must be discarded.
-    static let version = 2
+    /// v2: added `.file`/`.directory` entries (T18). v3: symbols now come from Tree-sitter (T16),
+    /// so regex-built caches must be discarded.
+    static let version = 3
 
     private struct Payload: Codable {
         var version: Int

@@ -17,10 +17,16 @@
 		8EDE63372FE5B2FF0024E0D5 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EDE631E2FE5B2FF0024E0D5 /* AppDelegate.swift */; };
 		8EDE63382FE5B2FF0024E0D5 /* OverlayWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EDE631F2FE5B2FF0024E0D5 /* OverlayWindow.swift */; };
 		8EDE63392FE5B2FF0024E0D5 /* RegexParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EDE63242FE5B2FF0024E0D5 /* RegexParser.swift */; };
+		AA0600000000000000000011 /* TreeSitterParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0600000000000000000010 /* TreeSitterParser.swift */; };
 		8EDE633A2FE5B2FF0024E0D5 /* Symbol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EDE63262FE5B2FF0024E0D5 /* Symbol.swift */; };
 		8EDE633B2FE5B2FF0024E0D5 /* SymbolPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EDE632C2FE5B2FF0024E0D5 /* SymbolPickerView.swift */; };
 		8EDE633E2FE5B6410024E0D5 /* SwiftTreeSitter in Frameworks */ = {isa = PBXBuildFile; productRef = 8EDE633D2FE5B6410024E0D5 /* SwiftTreeSitter */; };
 		8EDE63402FE5B6410024E0D5 /* SwiftTreeSitterLayer in Frameworks */ = {isa = PBXBuildFile; productRef = 8EDE633F2FE5B6410024E0D5 /* SwiftTreeSitterLayer */; };
+		AA0100000000000000000003 /* TreeSitterSwift in Frameworks */ = {isa = PBXBuildFile; productRef = AA0100000000000000000002 /* TreeSitterSwift */; };
+		AA0200000000000000000003 /* TreeSitterPython in Frameworks */ = {isa = PBXBuildFile; productRef = AA0200000000000000000002 /* TreeSitterPython */; };
+		AA0300000000000000000003 /* TreeSitterTypeScript in Frameworks */ = {isa = PBXBuildFile; productRef = AA0300000000000000000002 /* TreeSitterTypeScript */; };
+		AA0400000000000000000003 /* TreeSitterRust in Frameworks */ = {isa = PBXBuildFile; productRef = AA0400000000000000000002 /* TreeSitterRust */; };
+		AA0500000000000000000003 /* TreeSitterGo in Frameworks */ = {isa = PBXBuildFile; productRef = AA0500000000000000000002 /* TreeSitterGo */; };
 		8EDE63F12FE5B2FF0024E0D5 /* SymbolPickerViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EDE63F22FE5B2FF0024E0D5 /* SymbolPickerViewModel.swift */; };
 /* End PBXBuildFile section */
 
@@ -42,6 +48,7 @@
 		8EDE63212FE5B2FF0024E0D5 /* OCREngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCREngine.swift; sourceTree = "<group>"; };
 		8EDE63222FE5B2FF0024E0D5 /* ScreenCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenCapture.swift; sourceTree = "<group>"; };
 		8EDE63242FE5B2FF0024E0D5 /* RegexParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RegexParser.swift; sourceTree = "<group>"; };
+		AA0600000000000000000010 /* TreeSitterParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TreeSitterParser.swift; sourceTree = "<group>"; };
 		8EDE63252FE5B2FF0024E0D5 /* RepoScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepoScanner.swift; sourceTree = "<group>"; };
 		8EDE63262FE5B2FF0024E0D5 /* Symbol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Symbol.swift; sourceTree = "<group>"; };
 		8EDE63272FE5B2FF0024E0D5 /* SymbolIndex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SymbolIndex.swift; sourceTree = "<group>"; };
@@ -74,6 +81,11 @@
 			files = (
 				8EDE633E2FE5B6410024E0D5 /* SwiftTreeSitter in Frameworks */,
 				8EDE63402FE5B6410024E0D5 /* SwiftTreeSitterLayer in Frameworks */,
+				AA0100000000000000000003 /* TreeSitterSwift in Frameworks */,
+				AA0200000000000000000003 /* TreeSitterPython in Frameworks */,
+				AA0300000000000000000003 /* TreeSitterTypeScript in Frameworks */,
+				AA0400000000000000000003 /* TreeSitterRust in Frameworks */,
+				AA0500000000000000000003 /* TreeSitterGo in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -120,6 +132,7 @@
 			isa = PBXGroup;
 			children = (
 				8EDE63242FE5B2FF0024E0D5 /* RegexParser.swift */,
+				AA0600000000000000000010 /* TreeSitterParser.swift */,
 				8EDE63252FE5B2FF0024E0D5 /* RepoScanner.swift */,
 				8EDE63262FE5B2FF0024E0D5 /* Symbol.swift */,
 				8EDE63272FE5B2FF0024E0D5 /* SymbolIndex.swift */,
@@ -200,6 +213,11 @@
 			packageProductDependencies = (
 				8EDE633D2FE5B6410024E0D5 /* SwiftTreeSitter */,
 				8EDE633F2FE5B6410024E0D5 /* SwiftTreeSitterLayer */,
+				AA0100000000000000000002 /* TreeSitterSwift */,
+				AA0200000000000000000002 /* TreeSitterPython */,
+				AA0300000000000000000002 /* TreeSitterTypeScript */,
+				AA0400000000000000000002 /* TreeSitterRust */,
+				AA0500000000000000000002 /* TreeSitterGo */,
 			);
 			productName = SymbolScan;
 			productReference = 8E3AEF872FE5A90E00A8E037 /* SymbolScan.app */;
@@ -234,6 +252,11 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				8EDE633C2FE5B6410024E0D5 /* XCRemoteSwiftPackageReference "swift-tree-sitter" */,
+				AA0100000000000000000001 /* XCRemoteSwiftPackageReference "tree-sitter-swift" */,
+				AA0200000000000000000001 /* XCRemoteSwiftPackageReference "tree-sitter-python" */,
+				AA0300000000000000000001 /* XCRemoteSwiftPackageReference "tree-sitter-typescript" */,
+				AA0400000000000000000001 /* XCRemoteSwiftPackageReference "tree-sitter-rust" */,
+				AA0500000000000000000001 /* XCRemoteSwiftPackageReference "tree-sitter-go" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 8E3AEF882FE5A90E00A8E037 /* Products */;
@@ -285,6 +308,7 @@
 				8EDE63372FE5B2FF0024E0D5 /* AppDelegate.swift in Sources */,
 				8EDE63382FE5B2FF0024E0D5 /* OverlayWindow.swift in Sources */,
 				8EDE63392FE5B2FF0024E0D5 /* RegexParser.swift in Sources */,
+				AA0600000000000000000011 /* TreeSitterParser.swift in Sources */,
 				8EDE633A2FE5B2FF0024E0D5 /* Symbol.swift in Sources */,
 				8EDE633B2FE5B2FF0024E0D5 /* SymbolPickerView.swift in Sources */,
 				8EDE63F12FE5B2FF0024E0D5 /* SymbolPickerViewModel.swift in Sources */,
@@ -481,7 +505,6 @@
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				HEADER_SEARCH_PATHS = "~/Library/Developer/Xcode/DerivedData/SymbolScan-bzmmtyzltrkmxaejsedjqnraukac/SourcePackages/checkouts/swift-tree-sitter/tree-sitter-swift/src";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -512,7 +535,6 @@
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				HEADER_SEARCH_PATHS = "~/Library/Developer/Xcode/DerivedData/SymbolScan-bzmmtyzltrkmxaejsedjqnraukac/SourcePackages/checkouts/swift-tree-sitter/tree-sitter-swift/src";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -572,6 +594,46 @@
 				minimumVersion = 0.25.0;
 			};
 		};
+		AA0100000000000000000001 /* XCRemoteSwiftPackageReference "tree-sitter-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/alex-pinkus/tree-sitter-swift";
+			requirement = {
+				kind = revision;
+				revision = 31d17fe7e818a2048c808b5c6fdc2dc792f4f5b5;
+			};
+		};
+		AA0200000000000000000001 /* XCRemoteSwiftPackageReference "tree-sitter-python" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/tree-sitter/tree-sitter-python";
+			requirement = {
+				kind = exactVersion;
+				version = 0.23.6;
+			};
+		};
+		AA0300000000000000000001 /* XCRemoteSwiftPackageReference "tree-sitter-typescript" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/tree-sitter/tree-sitter-typescript";
+			requirement = {
+				kind = exactVersion;
+				version = 0.23.2;
+			};
+		};
+		AA0400000000000000000001 /* XCRemoteSwiftPackageReference "tree-sitter-rust" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/tree-sitter/tree-sitter-rust";
+			requirement = {
+				kind = exactVersion;
+				version = 0.24.2;
+			};
+		};
+		AA0500000000000000000001 /* XCRemoteSwiftPackageReference "tree-sitter-go" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/tree-sitter/tree-sitter-go";
+			requirement = {
+				kind = exactVersion;
+				version = 0.23.4;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -584,6 +646,31 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 8EDE633C2FE5B6410024E0D5 /* XCRemoteSwiftPackageReference "swift-tree-sitter" */;
 			productName = SwiftTreeSitterLayer;
+		};
+		AA0100000000000000000002 /* TreeSitterSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AA0100000000000000000001 /* XCRemoteSwiftPackageReference "tree-sitter-swift" */;
+			productName = TreeSitterSwift;
+		};
+		AA0200000000000000000002 /* TreeSitterPython */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AA0200000000000000000001 /* XCRemoteSwiftPackageReference "tree-sitter-python" */;
+			productName = TreeSitterPython;
+		};
+		AA0300000000000000000002 /* TreeSitterTypeScript */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AA0300000000000000000001 /* XCRemoteSwiftPackageReference "tree-sitter-typescript" */;
+			productName = TreeSitterTypeScript;
+		};
+		AA0400000000000000000002 /* TreeSitterRust */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AA0400000000000000000001 /* XCRemoteSwiftPackageReference "tree-sitter-rust" */;
+			productName = TreeSitterRust;
+		};
+		AA0500000000000000000002 /* TreeSitterGo */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AA0500000000000000000001 /* XCRemoteSwiftPackageReference "tree-sitter-go" */;
+			productName = TreeSitterGo;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
