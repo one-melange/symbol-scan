@@ -142,19 +142,21 @@ class OverlayWindowController: NSWindowController {
     /// Resolve the picker: inject the selected symbol, copy it, or just dismiss.
     /// Called from both the key monitor and SwiftUI tap gestures.
     private func confirmAndHide(inject: Bool, dismissOnly: Bool = false) {
-        let name = dismissOnly ? nil : viewModel?.selectedSymbolName()
+        // The composed reference (path + name for code symbols, name + parent dir for files/
+        // directories) rather than the bare name — see `Symbol.injectionText`.
+        let text = dismissOnly ? nil : viewModel?.selectedInjectionText()
 
-        if inject, let name {
+        if inject, let text {
             hide()
             // Hand focus back to the editor, then post keystrokes once it settles.
             if let app = previousApp, !app.isTerminated {
                 app.activate()
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-                TextInjector.inject(name, after: 0)
+                TextInjector.inject(text, after: 0)
             }
-        } else if !inject, let name {
-            TextInjector.copyToClipboard(name)
+        } else if !inject, let text {
+            TextInjector.copyToClipboard(text)
             hide()
         } else {
             hide()

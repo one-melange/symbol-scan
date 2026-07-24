@@ -66,6 +66,19 @@ class SymbolIndex: ObservableObject {
                 collected.append(contentsOf: fileSymbols)
             }
 
+            // T18: index every repo file (any type) and directory as its own entry, so paths are
+            // searchable/injectable alongside in-file symbols. Appended after code symbols so an
+            // exact-name symbol match still ranks ahead of a same-named file/dir.
+            let allFiles = (try? await s.enumerateAllFiles()) ?? []
+            for rel in allFiles {
+                let name = (rel as NSString).lastPathComponent
+                collected.append(Symbol(name: name, kind: .file, filePath: rel, line: 0))
+            }
+            for dir in RepoScanner.directories(for: allFiles) {
+                let name = (dir as NSString).lastPathComponent
+                collected.append(Symbol(name: name, kind: .directory, filePath: dir, line: 0))
+            }
+
             // Drop accidental duplicates (e.g. the same file enumerated twice).
             var seen = Set<String>()
             let deduped = collected.filter { sym in
@@ -181,7 +194,8 @@ enum SymbolMatcher {
 /// the filesystem.
 enum IndexCache {
     /// Bump when the payload shape changes; a mismatch makes `decode` return nil → forces a rescan.
-    static let version = 1
+    /// v2: added `.file`/`.directory` entries (T18), so v1 caches must be discarded.
+    static let version = 2
 
     private struct Payload: Codable {
         var version: Int
