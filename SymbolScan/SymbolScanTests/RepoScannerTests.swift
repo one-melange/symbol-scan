@@ -11,6 +11,17 @@ import Foundation
         return url
     }
 
+    private func runGit(_ args: [String], in dir: URL) throws {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        p.arguments = args
+        p.currentDirectoryURL = dir
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        try p.run()
+        p.waitUntilExit()
+    }
+
     @Test func relativePathStripsRootPrefix() {
         let scanner = RepoScanner(root: URL(fileURLWithPath: "/tmp/repo"))
         #expect(scanner.relativePath(for: URL(fileURLWithPath: "/tmp/repo/src/a.swift")) == "src/a.swift")
@@ -58,5 +69,58 @@ import Foundation
         #expect(names.contains("b.py"))
         #expect(!names.contains("readme.md"))   // unknown language
         #expect(!names.contains("dep.swift"))   // excluded directory
+    }
+
+    @Test func enumerateAllFilesKeepsNonSourceButHonorsExclusions() async throws {
+        let base = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let nodeModules = base.appendingPathComponent("node_modules")
+        try FileManager.default.createDirectory(at: nodeModules, withIntermediateDirectories: true)
+        let src = base.appendingPathComponent("src")
+        try FileManager.default.createDirectory(at: src, withIntermediateDirectories: true)
+
+        try "func a() {}".write(to: src.appendingPathComponent("a.swift"), atomically: true, encoding: .utf8)
+        try "# notes".write(to: base.appendingPathComponent("readme.md"), atomically: true, encoding: .utf8)
+        try "junk".write(to: nodeModules.appendingPathComponent("dep.swift"), atomically: true, encoding: .utf8)
+
+        // No .git in this temp dir → exercises the FileManager fallback path.
+        let paths = Set(try await RepoScanner(root: base).enumerateAllFiles())
+        #expect(paths.contains("src/a.swift"))
+        #expect(paths.contains("readme.md"))         // non-source file kept (unlike enumerateSourceFiles)
+        #expect(!paths.contains("node_modules/dep.swift"))  // excluded directory still pruned
+    }
+
+    /// Regression for the freeze bug: `gitLsFilesRaw` used to `waitUntilExit()` before draining
+    /// stdout, so a repo whose `git ls-files` output exceeded the ~64KB pipe buffer deadlocked
+    /// forever. This builds a real git repo whose output is well over 64KB and asserts it returns.
+    /// If the deadlock regresses, this test hangs and fails the run.
+    @Test func enumerateAllFilesDoesNotDeadlockOnLargeGitOutput() async throws {
+        let base = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: base) }
+        try runGit(["init", "-q"], in: base)   // real repo → exercises the git ls-files (Process/Pipe) path
+
+        // ~2000 files × ~50-char paths ≈ 100KB of `git ls-files` output, comfortably past the pipe
+        // buffer. Untracked files are surfaced via --others (no commit needed).
+        let dir = base.appendingPathComponent("pkg")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let count = 2000
+        for i in 0..<count {
+            let name = String(format: "some_reasonably_long_source_file_name_%05d.txt", i)
+            try Data().write(to: dir.appendingPathComponent(name))
+        }
+
+        let paths = try await RepoScanner(root: base).enumerateAllFiles()
+        #expect(paths.count == count)
+        #expect(paths.allSatisfy { $0.hasPrefix("pkg/") })
+    }
+
+    @Test func directoriesDerivesAllAncestorPrefixes() {
+        let dirs = RepoScanner.directories(for: [
+            "a/b/c.txt",
+            "a/d.txt",
+            "top.txt",          // top-level file → contributes no directory
+            "x/y/z/deep.swift",
+        ])
+        #expect(dirs == ["a", "a/b", "x", "x/y", "x/y/z"])
     }
 }

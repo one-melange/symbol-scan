@@ -59,6 +59,9 @@ class OverlayWindowController: NSWindowController {
     private var previousApp: NSRunningApplication?
     /// The view model backing the currently-shown picker (nil while hidden).
     private var viewModel: SymbolPickerViewModel?
+    /// The trigger that opened the current picker — determines the injected prefix (see
+    /// `injectionPrefix`).
+    private var currentTrigger: EventTap.Trigger?
 
     /// Invoked when the user asks to choose a different repo (⌘O or the in-picker action).
     var onChooseRepo: (() -> Void)?
@@ -103,6 +106,7 @@ class OverlayWindowController: NSWindowController {
 
         let vm = SymbolPickerViewModel(index: index)
         self.viewModel = vm
+        self.currentTrigger = trigger
 
         let pickerView = SymbolPickerView(viewModel: vm, trigger: trigger) { [weak self] action in
             switch action {
@@ -142,25 +146,53 @@ class OverlayWindowController: NSWindowController {
     /// Resolve the picker: inject the selected symbol, copy it, or just dismiss.
     /// Called from both the key monitor and SwiftUI tap gestures.
     private func confirmAndHide(inject: Bool, dismissOnly: Bool = false) {
-        let name = dismissOnly ? nil : viewModel?.selectedSymbolName()
+        // The composed reference body (path + name for code symbols, name + parent dir for files/
+        // directories) rather than the bare name — see `Symbol.injectionText` — with the
+        // trigger-appropriate prefix so we don't duplicate the `@`/`#` the user already typed
+        // (composition kept pure in `InjectionComposer` so it's unit-testable).
+        let text = dismissOnly
+            ? nil
+            : viewModel?.selectedInjectionText().map { InjectionComposer.compose(trigger: currentTrigger, body: $0) }
 
-        if inject, let name {
+        if inject, let text {
             hide()
             // Hand focus back to the editor, then post keystrokes once it settles.
             if let app = previousApp, !app.isTerminated {
                 app.activate()
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-                TextInjector.inject(name, after: 0)
+                TextInjector.inject(text, after: 0)
             }
-        } else if !inject, let name {
-            TextInjector.copyToClipboard(name)
+        } else if !inject, let text {
+            TextInjector.copyToClipboard(text)
             hide()
         } else {
             hide()
         }
 
         previousApp = nil
+    }
+}
+
+// MARK: - Injection composition
+
+/// Pure composition of the text injected/copied when a picker row is chosen, split out (like
+/// `OverlayPlacement` / `StatusMenuModel`) so it's unit-testable without AppKit.
+///
+/// `Symbol.injectionText` supplies the reference *body*; the leading marker comes from the trigger:
+/// the `@`/`#` triggers pass their keystroke through to the target app (see `EventTap`), so the
+/// marker is already in the buffer and we add nothing — otherwise it doubles (`@@…`). The `⌘⇧O`
+/// trigger types nothing, so we supply a leading `@` to match the same reference shape.
+enum InjectionComposer {
+    static func prefix(for trigger: EventTap.Trigger?) -> String {
+        switch trigger {
+        case .at, .hash: return ""     // already typed into the target app
+        default:         return "@"    // ⌘⇧O (or none) — nothing was typed
+        }
+    }
+
+    static func compose(trigger: EventTap.Trigger?, body: String) -> String {
+        prefix(for: trigger) + body
     }
 }
 

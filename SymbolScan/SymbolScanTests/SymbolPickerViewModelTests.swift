@@ -56,12 +56,30 @@ import Testing
         #expect(vm.selectedIndex == 0)
     }
 
-    @Test func selectedSymbolNameTracksArrowNavigation() {
+    @Test func selectedSymbolTracksArrowNavigation() {
         let vm = makeVM(["alpha", "alphabet", "alpine"])
         vm.updateQuery("al")
         vm.moveSelection(1)
         vm.moveSelection(1)
         #expect(vm.selectedIndex == 2)
-        #expect(vm.selectedSymbolName() == vm.results[2].name)
+        #expect(vm.selectedSymbol()?.name == vm.results[2].name)
+    }
+
+    @Test func selectedInjectionTextComposesReference() {
+        let index = SymbolIndex()
+        index.loadForTesting([
+            Symbol(name: "search", kind: .function, filePath: "Index/SymbolIndex.swift", line: 105)
+        ])
+        let vm = SymbolPickerViewModel(index: index)
+        // Body only — the leading `@`/`#` prefix comes from the trigger key the user typed
+        // (or is supplied by the overlay for ⌘⇧O), not from injectionText.
+        #expect(vm.selectedInjectionText() == "Index/SymbolIndex.swift:105 search")
+    }
+
+    @Test func selectedInjectionTextNilWhenNoResults() {
+        let vm = makeVM(["abc"])
+        vm.updateQuery("zzz")
+        #expect(vm.results.isEmpty)
+        #expect(vm.selectedInjectionText() == nil)
     }
 }

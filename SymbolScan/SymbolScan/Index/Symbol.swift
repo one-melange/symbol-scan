@@ -24,6 +24,26 @@ struct Symbol: Identifiable, Hashable, Codable {
         let parts = filePath.split(separator: "/").map(String.init)
         return parts.suffix(2).joined(separator: "/")
     }
+
+    /// The reference **body** injected (or copied) when this entry is picked — the leading
+    /// prefix marker (`@` / `#`) is NOT included here: for the `@`/`#` triggers the user has
+    /// already typed it into the target app (see `EventTap`, which passes those keys through),
+    /// and the overlay supplies one for the `⌘⇧O` trigger. Prepending it here would double it
+    /// (`@@…`). Kept pure so it's unit-testable. Two shapes by kind:
+    /// - code symbols → `<relativePath>:<line> <name>` (the `file:line` editor convention,
+    ///   followed by the symbol name), e.g. `Index/SymbolIndex.swift:105 search`.
+    /// - file / directory entries → `<name> <relative-parent-dir>`, e.g.
+    ///   `SymbolIndex.swift Index` or `Index src`. An entry at the repo root has no parent, so
+    ///   just `<name>` (no trailing space).
+    var injectionText: String {
+        switch kind {
+        case .file, .directory:
+            let parent = (filePath as NSString).deletingLastPathComponent
+            return parent.isEmpty ? name : "\(name) \(parent)"
+        default:
+            return "\(filePath):\(line) \(name)"
+        }
+    }
 }
 
 // MARK: - Symbol Kind
@@ -39,6 +59,8 @@ enum SymbolKind: String, CaseIterable, Codable {
     case constant   = "const"
     case variable   = "var"
     case type       = "type"     // Go type aliases, Rust type aliases
+    case file       = "file"     // a repo file (any type) — T18
+    case directory  = "dir"      // a repo directory — T18
 
     var icon: String {
         switch self {
@@ -52,6 +74,8 @@ enum SymbolKind: String, CaseIterable, Codable {
         case .constant:  return "K"
         case .variable:  return "V"
         case .type:      return "τ"
+        case .file:      return "F"
+        case .directory: return "D"
         }
     }
 
@@ -62,6 +86,7 @@ enum SymbolKind: String, CaseIterable, Codable {
         case .class, .struct:              return "symbolType"
         case .enum, .trait, .interface:    return "symbolEnum"
         case .constant, .variable, .type:  return "symbolVar"
+        case .file, .directory:            return "symbolPath"
         }
     }
 }
