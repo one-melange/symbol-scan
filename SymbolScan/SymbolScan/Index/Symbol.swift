@@ -25,10 +25,13 @@ struct Symbol: Identifiable, Hashable, Codable {
         return parts.suffix(2).joined(separator: "/")
     }
 
-    /// The exact text injected (or copied) when this entry is picked. Single source of truth,
-    /// kept pure so it's unit-testable. Two shapes by kind:
-    /// - code symbols → `@<relativePath>:<line> <name>` (the `@file:line` editor convention,
-    ///   followed by the symbol name), e.g. `@Index/SymbolIndex.swift:105 search`.
+    /// The reference **body** injected (or copied) when this entry is picked — the leading
+    /// prefix marker (`@` / `#`) is NOT included here: for the `@`/`#` triggers the user has
+    /// already typed it into the target app (see `EventTap`, which passes those keys through),
+    /// and the overlay supplies one for the `⌘⇧O` trigger. Prepending it here would double it
+    /// (`@@…`). Kept pure so it's unit-testable. Two shapes by kind:
+    /// - code symbols → `<relativePath>:<line> <name>` (the `file:line` editor convention,
+    ///   followed by the symbol name), e.g. `Index/SymbolIndex.swift:105 search`.
     /// - file / directory entries → `<name> <relative-parent-dir>`, e.g.
     ///   `SymbolIndex.swift Index` or `Index src`. An entry at the repo root has no parent, so
     ///   just `<name>` (no trailing space).
@@ -38,7 +41,7 @@ struct Symbol: Identifiable, Hashable, Codable {
             let parent = (filePath as NSString).deletingLastPathComponent
             return parent.isEmpty ? name : "\(name) \(parent)"
         default:
-            return "@\(filePath):\(line) \(name)"
+            return "\(filePath):\(line) \(name)"
         }
     }
 }
