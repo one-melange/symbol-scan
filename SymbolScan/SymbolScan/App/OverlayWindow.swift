@@ -145,24 +145,14 @@ class OverlayWindowController: NSWindowController {
 
     /// Resolve the picker: inject the selected symbol, copy it, or just dismiss.
     /// Called from both the key monitor and SwiftUI tap gestures.
-    /// The prefix marker to prepend to the injected reference. For the `@`/`#` triggers the user
-    /// already typed the marker into the target app (EventTap passes those keys through), so we add
-    /// nothing — otherwise we'd double it (`@@…`). The `⌘⇧O` trigger types nothing, so we supply a
-    /// leading `@` to match the same reference shape.
-    private func injectionPrefix(for trigger: EventTap.Trigger?) -> String {
-        switch trigger {
-        case .at, .hash: return ""     // already in the buffer
-        default:         return "@"    // ⌘⇧O (or unknown) — nothing was typed
-        }
-    }
-
     private func confirmAndHide(inject: Bool, dismissOnly: Bool = false) {
         // The composed reference body (path + name for code symbols, name + parent dir for files/
         // directories) rather than the bare name — see `Symbol.injectionText` — with the
-        // trigger-appropriate prefix so we don't duplicate the `@`/`#` the user already typed.
+        // trigger-appropriate prefix so we don't duplicate the `@`/`#` the user already typed
+        // (composition kept pure in `InjectionComposer` so it's unit-testable).
         let text = dismissOnly
             ? nil
-            : viewModel?.selectedInjectionText().map { injectionPrefix(for: currentTrigger) + $0 }
+            : viewModel?.selectedInjectionText().map { InjectionComposer.compose(trigger: currentTrigger, body: $0) }
 
         if inject, let text {
             hide()
@@ -181,6 +171,28 @@ class OverlayWindowController: NSWindowController {
         }
 
         previousApp = nil
+    }
+}
+
+// MARK: - Injection composition
+
+/// Pure composition of the text injected/copied when a picker row is chosen, split out (like
+/// `OverlayPlacement` / `StatusMenuModel`) so it's unit-testable without AppKit.
+///
+/// `Symbol.injectionText` supplies the reference *body*; the leading marker comes from the trigger:
+/// the `@`/`#` triggers pass their keystroke through to the target app (see `EventTap`), so the
+/// marker is already in the buffer and we add nothing — otherwise it doubles (`@@…`). The `⌘⇧O`
+/// trigger types nothing, so we supply a leading `@` to match the same reference shape.
+enum InjectionComposer {
+    static func prefix(for trigger: EventTap.Trigger?) -> String {
+        switch trigger {
+        case .at, .hash: return ""     // already typed into the target app
+        default:         return "@"    // ⌘⇧O (or none) — nothing was typed
+        }
+    }
+
+    static func compose(trigger: EventTap.Trigger?, body: String) -> String {
+        prefix(for: trigger) + body
     }
 }
 
