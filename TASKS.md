@@ -17,7 +17,7 @@ in progress, and done.
 
 ## Now
 
-_(nothing in progress)_
+- [ ] (T19) Background / non-blocking indexing + multi-repo + completion notification — **root cause of the large-repo freeze was a `Process`/`Pipe` deadlock in `RepoScanner.gitLsFilesRaw`**: it called `waitUntilExit()` *before* draining stdout, so a repo whose `git ls-files` output exceeded the ~64KB pipe buffer (e.g. `product-cx-utilities`, 37.5k files ≈ 1.5MB) blocked git on a full pipe while the app blocked waiting for git — a hang that never completed. Fixed by reading stdout to EOF before waiting + discarding stderr to `nullDevice` (verified: old order deadlocks, new returns 37,553 files instantly). Separately, indexing moved off the `@MainActor` (whole `reindex` used to run there). Heavy work moved off-main into a nonisolated `Indexer.buildIndex`; `SymbolIndex` now holds an active-repo view plus a per-repo background job registry (`jobs: [URL: Task]`) so repos index concurrently and switching never cancels another repo's job. Completion of a real scan posts a `UNUserNotificationCenter` banner (`IndexNotifier`) and the menu-bar icon/tooltip update live (Combine on `objectWillChange`); cache-hit switches stay silent. `activateRepo`/`reindex` are now synchronous non-blocking launchers; dead-repo cleanup moved to `SymbolIndex.onRepoInvalid`. Removed the dead `reindexFile`/`scanner` (see T4). *Implemented on branch `tree_sitter`; pending live verification (re-run the `product-cx-utilities` freeze repro).* · `SymbolScan/SymbolScan/Index/Indexer.swift`, `Index/SymbolIndex.swift`, `App/IndexNotifier.swift`, `App/AppDelegate.swift`
 
 ## Next
 
@@ -25,7 +25,7 @@ _(nothing in progress)_
 
 Recommended execution order: **T4 → T7.**
 
-- [ ] (T4) Incremental reindex on save — `SymbolIndex.reindexFile` exists but has no callers; wire up a file watcher or remove the dead method · `SymbolScan/SymbolScan/Index/SymbolIndex.swift` (note: should also refresh the `IndexCache` on-disk cache)
+- [ ] (T4) Incremental reindex on save — the dead `SymbolIndex.reindexFile` was removed in T19; this is now purely "add a file watcher that re-parses just the saved file and refreshes the `IndexCache`" (build from scratch, likely as a per-repo background job like T19) · `SymbolScan/SymbolScan/Index/SymbolIndex.swift`
 - [ ] (T7) RepoScanner robustness — add a file-size cap, expand excluded dirs (`target/`, `vendor/`, `__pycache__/`, `.next/`, …), handle symlinks · `SymbolScan/SymbolScan/Index/RepoScanner.swift`
 - [ ] (T8) Language coverage — **superseded by T16** (now landed); the Tree-sitter parser distinguishes method-vs-function via ancestry and adds Go struct/interface/alias, Rust impl methods, etc. Remaining gap: JS/JSX (`.js`/`.jsx` not in `Language.detect`). Reopen only for that · `SymbolScan/SymbolScan/Index/TreeSitterParser.swift`
 

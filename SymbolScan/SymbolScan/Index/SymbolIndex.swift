@@ -13,101 +13,113 @@ class SymbolIndex: ObservableObject {
     @Published var lastIndexError: String?
 
     private var symbols: [Symbol] = []
-    private var scanner: RepoScanner?
+
+    /// In-flight background index jobs, keyed by repo root. Repos index concurrently; switching the
+    /// active repo never cancels another repo's job, so a long index of repo A keeps running while
+    /// the user works in repo B.
+    private var jobs: [URL: Task<Void, Never>] = [:]
+
+    /// Invoked on the main actor when an index job fails because the path isn't a usable git repo,
+    /// so the app can forget a dead/renamed repo preference.
+    var onRepoInvalid: ((URL) -> Void)?
 
     // MARK: - Activation
 
-    /// Make `repoRoot` the active repo. If a persisted index exists on disk, load it and skip the
-    /// scan entirely (this is what makes repo-switching instant — the index is only rebuilt on an
-    /// explicit `reindex`). Otherwise fall through to a full scan.
-    func activateRepo(_ repoRoot: URL) async {
-        guard !isIndexing else { return }
+    /// Make `root` the active repo (what the picker searches). Non-blocking: loads the on-disk
+    /// cache off the main actor if present (instant, silent), otherwise starts a background scan.
+    /// All heavy work runs off the main thread, and switching repos never cancels another repo's
+    /// in-flight job — so a long index keeps running while the user works elsewhere.
+    func activateRepo(_ root: URL) {
+        indexedRepoRoot = root
+        lastIndexError = nil
+        symbols = []
+        symbolCount = 0
+        isIndexing = jobs[root] != nil   // reflect an already-running background job for this repo
 
-        if let cached = IndexCache.load(for: repoRoot) {
-            lastIndexError = nil
-            scanner = RepoScanner(root: repoRoot)
+        // Load the on-disk cache OFF the main thread (a big cache's JSON decode can itself block),
+        // then apply on the main actor. `Task.detached` guarantees the closure body runs with no
+        // actor isolation — a plain `Task {}` here would inherit `@MainActor` and block the UI.
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let cached = await Indexer.loadCache(root: root)
+            await self?.applyActivation(root: root, cached: cached)
+        }
+    }
+
+    /// Main-actor apply for `activateRepo`'s off-main cache probe.
+    private func applyActivation(root: URL, cached: [Symbol]?) {
+        guard indexedRepoRoot == root else { return }   // superseded by a newer switch
+        if let cached {
             symbols = cached
             symbolCount = cached.count
-            indexedRepoRoot = repoRoot
-            print("💾 Loaded \(cached.count) cached symbols for \(repoRoot.lastPathComponent)")
-            return
+            isIndexing = false
+            print("💾 Loaded \(cached.count) cached symbols for \(root.lastPathComponent)")
+        } else {
+            startJob(root: root, force: false)
         }
-
-        await reindex(repoRoot)
     }
 
     // MARK: - Indexing
 
-    /// Rescan `repoRoot` from scratch and persist the result to disk. Used on first activation of a
-    /// repo and by the explicit Reindex action (⌘R / menu).
-    func reindex(_ repoRoot: URL) async {
-        guard !isIndexing else { return }
-        isIndexing = true
-        lastIndexError = nil
-        defer { isIndexing = false }
-
-        let s = RepoScanner(root: repoRoot)
-        guard s.isGitRepo else {
-            print("⚠️ Not a git repo: \(repoRoot.path)")
-            lastIndexError = "Not a git repository"
-            return
-        }
-        self.scanner = s
-
-        do {
-            let files = try await s.enumerateSourceFiles()
-            print("📁 Found \(files.count) files: \(files.map(\.lastPathComponent))")
-            var collected: [Symbol] = []
-
-            for url in files {
-                guard let lang = Language.detect(from: url) else { continue }
-                let relPath = s.relativePath(for: url)
-                let fileSymbols = (try? SymbolParser.parse(url: url, language: lang, relativePath: relPath)) ?? []
-                collected.append(contentsOf: fileSymbols)
-            }
-
-            // T18: index every repo file (any type) and directory as its own entry, so paths are
-            // searchable/injectable alongside in-file symbols. Appended after code symbols so an
-            // exact-name symbol match still ranks ahead of a same-named file/dir.
-            let allFiles = (try? await s.enumerateAllFiles()) ?? []
-            for rel in allFiles {
-                let name = (rel as NSString).lastPathComponent
-                collected.append(Symbol(name: name, kind: .file, filePath: rel, line: 0))
-            }
-            for dir in RepoScanner.directories(for: allFiles) {
-                let name = (dir as NSString).lastPathComponent
-                collected.append(Symbol(name: name, kind: .directory, filePath: dir, line: 0))
-            }
-
-            // Drop accidental duplicates (e.g. the same file enumerated twice).
-            var seen = Set<String>()
-            let deduped = collected.filter { sym in
-                seen.insert("\(sym.name)|\(sym.filePath)|\(sym.line)").inserted
-            }
-
-            self.symbols = deduped
-            self.symbolCount = deduped.count
-            self.indexedRepoRoot = repoRoot
-            IndexCache.save(deduped, for: repoRoot)
-            print("✅ Indexed \(deduped.count) symbols across \(files.count) files in \(repoRoot.lastPathComponent)")
-        } catch {
-            print("❌ Indexing error: \(error)")
-            lastIndexError = error.localizedDescription
-        }
+    /// Rescan `root` from scratch, bypassing the cache. Used by the explicit Reindex action (⌘R).
+    /// Non-blocking; cancels only a still-running job for the *same* repo.
+    func reindex(_ root: URL) {
+        startJob(root: root, force: true)
     }
 
-    /// Re-index a single file (call on file-save events)
-    func reindexFile(url: URL) async {
-        guard let scanner, let lang = Language.detect(from: url) else { return }
-        let relPath = scanner.relativePath(for: url)
+    /// Start (or attach to) a background index job for `root`. Jobs for different repos run
+    /// concurrently. Publishing back into the active-repo view is guarded by `indexedRepoRoot`.
+    private func startJob(root: URL, force: Bool) {
+        if let existing = jobs[root] {
+            if force {
+                existing.cancel()
+            } else {
+                if root == indexedRepoRoot { isIndexing = true }
+                return   // already indexing this repo — attach rather than duplicate
+            }
+        }
+        if root == indexedRepoRoot {
+            isIndexing = true
+            lastIndexError = nil
+        }
+        // `Task.detached` (not `Task {}`) so the heavy scan/parse runs with no actor isolation and
+        // never touches the main thread; results are handed back via the `@MainActor` `finishJob`.
+        let task = Task.detached(priority: .userInitiated) { [weak self] in
+            let outcome: Result<Indexer.Result, Error>
+            do {
+                outcome = .success(try await Indexer.buildIndex(root: root))
+            } catch {
+                outcome = .failure(error)
+            }
+            await self?.finishJob(root: root, outcome: outcome)
+        }
+        jobs[root] = task
+    }
 
-        // Remove old symbols from this file
-        symbols.removeAll { $0.filePath == relPath }
-
-        // Re-parse
-        if let fresh = try? SymbolParser.parse(url: url, language: lang, relativePath: relPath) {
-            symbols.append(contentsOf: fresh)
-            symbolCount = symbols.count
+    /// Main-actor completion for an index job: publish results if `root` is still the active repo,
+    /// fire the completion banner (real scans only — cache hits don't reach here), and surface
+    /// errors. A cancelled job (superseded by a forced re-index of the same repo) leaves state to
+    /// its replacement.
+    private func finishJob(root: URL, outcome: Result<Indexer.Result, Error>) {
+        switch outcome {
+        case .success(let result):
+            jobs[root] = nil
+            if root == indexedRepoRoot {
+                symbols = result.symbols
+                symbolCount = result.symbols.count
+                isIndexing = false
+                lastIndexError = nil
+            }
+            print("✅ Indexed \(result.symbols.count) symbols across \(result.fileCount) files in \(root.lastPathComponent)")
+            IndexNotifier.notifyIndexed(root: root, count: result.symbols.count)
+        case .failure(let error):
+            if error is CancellationError { return }   // replaced by a forced re-index
+            jobs[root] = nil
+            if root == indexedRepoRoot {
+                isIndexing = false
+                lastIndexError = error.localizedDescription
+            }
+            print("❌ Indexing error for \(root.lastPathComponent): \(error)")
+            if error is IndexError { onRepoInvalid?(root) }
         }
     }
 
