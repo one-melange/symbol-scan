@@ -31,7 +31,12 @@ enum Indexer {
     /// dedup, persist to the on-disk cache, and return the result. Throws `IndexError.notGitRepo`
     /// for a non-git directory, or `CancellationError` if a superseding (forced) re-index of the
     /// **same** repo cancelled this job.
-    static func buildIndex(root: URL) async throws -> Result {
+    ///
+    /// `cacheBase` exists purely so tests can exercise the whole composition without writing to the
+    /// user's real Application Support directory — everything else here already works against a
+    /// temp repo. It mirrors the `base:` parameter `IndexCache.save`/`load` have always had, and
+    /// defaults to the same value, so production call sites pass `(root:)` and behave identically.
+    static func buildIndex(root: URL, cacheBase: URL? = IndexCache.baseDirectory()) async throws -> Result {
         let scanner = RepoScanner(root: root)
         guard scanner.isGitRepo else { throw IndexError.notGitRepo }
 
@@ -66,13 +71,13 @@ enum Indexer {
         }
 
         try Task.checkCancellation()
-        IndexCache.save(deduped, for: root)   // encode + write also off-main
+        IndexCache.save(deduped, for: root, base: cacheBase)   // encode + write also off-main
         return Result(symbols: deduped, fileCount: files.count)
     }
 
     /// Load a persisted index off the main actor (JSON decode of a large cache can itself block).
-    /// Returns nil when there's no valid cache for `root`.
-    static func loadCache(root: URL) async -> [Symbol]? {
-        IndexCache.load(for: root)
+    /// Returns nil when there's no valid cache for `root`. See `buildIndex` for `cacheBase`.
+    static func loadCache(root: URL, cacheBase: URL? = IndexCache.baseDirectory()) async -> [Symbol]? {
+        IndexCache.load(for: root, base: cacheBase)
     }
 }
