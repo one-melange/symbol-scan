@@ -113,6 +113,43 @@ import Testing
         #expect(has(s, "Alias", .type))
     }
 
+    @Test func tsx() throws {
+        let s = try parse([
+            "export function App(): JSX.Element {",
+            "    return <div className=\"x\">hi</div>;",
+            "}",
+            "",
+            "export const Button = (p: Props) => <button onClick={p.on} />;",
+            "",
+            "interface Props { on: () => void }",
+            "",
+            "class Panel {",
+            "    render() { return <p />; }",
+            "}",
+        ], .tsx)
+        #expect(has(s, "App", .function, 1))
+        #expect(has(s, "Button", .function, 5))
+        #expect(has(s, "Props", .interface, 7))
+        #expect(has(s, "Panel", .class, 9))
+        #expect(has(s, "render", .method, 10))
+    }
+
+    /// The T20 bug: `.tsx` was routed to the plain TypeScript grammar, which can't parse JSX.
+    /// Tree-sitter error-recovers rather than failing, so no fallback ever fired — symbols just
+    /// silently disappeared. Asserted as "strictly fewer" rather than an exact count so future
+    /// grammar-recovery improvements don't make this brittle.
+    @Test func jsxUnderThePlainTypeScriptGrammarLosesSymbols() throws {
+        let src = [
+            "export const Button = () => <button />;",
+            "export function App() { return <div><Button /></div>; }",
+        ]
+        let tsx = try parse(src, .tsx)
+        let ts  = try parse(src, .typescript)
+        #expect(tsx.count > ts.count)
+        #expect(has(tsx, "Button", .function))
+        #expect(has(tsx, "App", .function))
+    }
+
     @Test func swift() throws {
         let s = try parse([
             "func freeFunc() {}",

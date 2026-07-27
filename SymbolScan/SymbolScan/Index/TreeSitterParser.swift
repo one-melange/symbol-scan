@@ -3,6 +3,7 @@ import SwiftTreeSitter
 import TreeSitterSwift
 import TreeSitterPython
 import TreeSitterTypeScript
+import TreeSitterTSX
 import TreeSitterRust
 import TreeSitterGo
 
@@ -86,6 +87,10 @@ enum TreeSitterParser {
         switch language {
         case .python:     tsLanguage = TSLanguage(language: tree_sitter_python());     queryText = pythonQuery
         case .typescript: tsLanguage = TSLanguage(language: tree_sitter_typescript()); queryText = typeScriptQuery
+        // TSX shares TypeScript's node types for every pattern we match, so the query *text* is
+        // reused — but a `Query` is bound to a `TSLanguage`, so it must be compiled and cached
+        // separately.
+        case .tsx:        tsLanguage = TSLanguage(language: tree_sitter_tsx());        queryText = typeScriptQuery
         case .rust:       tsLanguage = TSLanguage(language: tree_sitter_rust());       queryText = rustQuery
         case .go:         tsLanguage = TSLanguage(language: tree_sitter_go());         queryText = goQuery
         case .swift:      tsLanguage = TSLanguage(language: tree_sitter_swift());      queryText = swiftQuery
@@ -128,7 +133,7 @@ enum TreeSitterParser {
         case .python: containers = ["class_definition"];                     functions = ["function_definition"]
         case .rust:   containers = ["impl_item", "trait_item"];              functions = ["function_item"]
         case .swift:  containers = ["class_declaration", "protocol_declaration"]; functions = ["function_declaration"]
-        case .go, .typescript: return false     // these capture methods via a dedicated pattern
+        case .go, .typescript, .tsx: return false   // these capture methods via a dedicated pattern
         }
         // Skip the declaration node itself (nameNode.parent); walk its ancestors.
         var current = nameNode.parent?.parent
@@ -203,8 +208,11 @@ enum TreeSitterParser {
     (type_item name: (type_identifier) @type)
     """
 
+    /// Shared by `.typescript` and `.tsx` — the TSX grammar names these nodes and fields
+    /// identically, it just also understands JSX.
     private static let typeScriptQuery = """
     (function_declaration name: (identifier) @fn)
+    (generator_function_declaration name: (identifier) @fn)
     (class_declaration name: (type_identifier) @class)
     (abstract_class_declaration name: (type_identifier) @class)
     (interface_declaration name: (type_identifier) @interface)

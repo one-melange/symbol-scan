@@ -7,10 +7,17 @@ import Foundation
     @Test func detectsKnownExtensions() {
         #expect(Language.detect(from: URL(fileURLWithPath: "/x/a.py"))    == .python)
         #expect(Language.detect(from: URL(fileURLWithPath: "/x/a.ts"))    == .typescript)
-        #expect(Language.detect(from: URL(fileURLWithPath: "/x/a.tsx"))   == .typescript)
         #expect(Language.detect(from: URL(fileURLWithPath: "/x/a.rs"))    == .rust)
         #expect(Language.detect(from: URL(fileURLWithPath: "/x/a.go"))    == .go)
         #expect(Language.detect(from: URL(fileURLWithPath: "/x/a.swift")) == .swift)
+    }
+
+    /// `Language` is the *grammar* key, not the language name: `.tsx` is TypeScript, but the TS
+    /// grammar can't parse JSX, so it needs its own dialect (T20).
+    @Test func detectsDialectsThatShareALanguage() {
+        #expect(Language.detect(from: URL(fileURLWithPath: "/x/a.tsx")) == .tsx)
+        #expect(Language.detect(from: URL(fileURLWithPath: "/x/a.mts")) == .typescript)
+        #expect(Language.detect(from: URL(fileURLWithPath: "/x/a.cts")) == .typescript)
     }
 
     @Test func detectIsCaseInsensitiveAndNilForUnknown() {
