@@ -71,6 +71,38 @@ import Foundation
         #expect(!names.contains("dep.swift"))   // excluded directory
     }
 
+    /// Enumeration filters through `Language.detect`, so the dialects added in T20/T8 have to
+    /// survive it — a grammar wired up in `TreeSitterParser` is useless if the file never reaches
+    /// the parser. Also pins the minified-name screen at the enumeration layer, where it saves the
+    /// file read entirely.
+    @Test func enumerateSourceFilesIncludesNewDialectsAndSkipsMinified() async throws {
+        let base = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let sources = [
+            "App.tsx": "export const App = () => <div />;",
+            "util.ts": "export function u() {}",
+            "script.js": "export function s() {}",
+            "widget.jsx": "export const W = () => <p />;",
+            "cfg.cjs": "module.exports = {};",
+            "vendor.min.js": "function a(){}",
+            "app.bundle.js": "function b(){}",
+        ]
+        for (name, body) in sources {
+            try body.write(to: base.appendingPathComponent(name), atomically: true, encoding: .utf8)
+        }
+
+        // No .git in this temp dir → exercises the FileManager fallback path.
+        let names = Set(try await RepoScanner(root: base).enumerateSourceFiles().map(\.lastPathComponent))
+        #expect(names.contains("App.tsx"))
+        #expect(names.contains("util.ts"))
+        #expect(names.contains("script.js"))
+        #expect(names.contains("widget.jsx"))
+        #expect(names.contains("cfg.cjs"))
+        #expect(!names.contains("vendor.min.js"))
+        #expect(!names.contains("app.bundle.js"))
+    }
+
     @Test func enumerateAllFilesKeepsNonSourceButHonorsExclusions() async throws {
         let base = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: base) }

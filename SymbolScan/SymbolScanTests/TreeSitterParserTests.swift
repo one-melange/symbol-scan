@@ -113,6 +113,16 @@ import Testing
         #expect(has(s, "Alias", .type))
     }
 
+    /// `generator_function_declaration` is a distinct node from `function_declaration` — it was
+    /// added to the shared TS/TSX query alongside the JavaScript one, so cover it on both grammars
+    /// rather than only in `javascript()`.
+    @Test func generatorFunctionsAreCapturedInTypeScriptAndTSX() throws {
+        for lang in [Language.typescript, .tsx] {
+            let s = try parse(["export function* ids(): Generator<number> { yield 1; }"], lang)
+            #expect(has(s, "ids", .function, 1), "generator missed for \(lang.rawValue)")
+        }
+    }
+
     @Test func tsx() throws {
         let s = try parse([
             "export function App(): JSX.Element {",
