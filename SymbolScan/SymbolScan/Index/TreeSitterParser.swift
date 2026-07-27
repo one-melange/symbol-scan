@@ -265,11 +265,36 @@ enum SymbolParser {
     /// not for this file, so there's nothing to fall back to. Report it once per language rather
     /// than silently returning `[]` — silence is exactly how the `.tsx` bug (T20) went unnoticed.
     static func parse(source: String, language: Language, path: String) -> [Symbol] {
+        guard !isMinified(source) else { return [] }
         guard let symbols = TreeSitterParser.parse(source: source, language: language, path: path) else {
             reportGrammarFailure(language)
             return []
         }
         return symbols
+    }
+
+    /// Longest line a hand-written source file is assumed to stay under. Measured across 174 real
+    /// `.js`/`.ts`/`.tsx` files: hand-written topped out at 1,289 characters, while minified
+    /// bundles hit 628,095 — a ~500× gap, so the exact threshold isn't delicate.
+    static let minifiedLineThreshold = 5_000
+
+    /// Minified/generated output is a single enormous line of mangled identifiers: two committed
+    /// Vite bundles alone yielded 16,901 junk symbols (`ur`, `Rr`, `Sm`, …) that would swamp the
+    /// picker. Name patterns don't catch it — Vite emits `index-DJ7HgGZS.js`, not `*.min.js` — so
+    /// screen on the shape of the content instead. Checked here rather than in `Language.detect`
+    /// because the source is already in hand, keeping detection pure and IO-free. A general
+    /// file-size cap is still T7.
+    static func isMinified(_ source: String) -> Bool {
+        var lineLength = 0
+        for char in source.unicodeScalars {
+            if char == "\n" {
+                lineLength = 0
+            } else {
+                lineLength += 1
+                if lineLength > minifiedLineThreshold { return true }
+            }
+        }
+        return false
     }
 
     // Indexing runs on a detached task, so the once-per-language guard needs a lock — same pattern

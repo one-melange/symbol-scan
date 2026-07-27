@@ -254,6 +254,30 @@ import Testing
         }
     }
 
+    // MARK: - Minified-source guard (T8)
+
+    @Test func minifiedSourceIsSkipped() {
+        // One long line of mangled declarations, as a bundler emits.
+        let bundle = (0..<400).map { "function m\($0)(a,b){return a+b}" }.joined()
+        #expect(bundle.count > SymbolParser.minifiedLineThreshold)
+        #expect(SymbolParser.isMinified(bundle))
+        #expect(SymbolParser.parse(source: bundle, language: .javascript, path: "index-DJ7HgGZS.js").isEmpty)
+    }
+
+    @Test func ordinarySourceIsNotTreatedAsMinified() {
+        // Same total size, but split across lines — length alone must not trip the guard.
+        let normal = (0..<400).map { "function m\($0)(a, b) { return a + b; }" }.joined(separator: "\n")
+        #expect(normal.count > SymbolParser.minifiedLineThreshold)
+        #expect(!SymbolParser.isMinified(normal))
+        #expect(SymbolParser.parse(source: normal, language: .javascript, path: "app.js").count == 400)
+    }
+
+    /// A long *trailing* line with no terminating newline must still trip the guard.
+    @Test func minifiedDetectionHandlesUnterminatedFinalLine() {
+        let source = "// header\n" + String(repeating: "x", count: SymbolParser.minifiedLineThreshold + 1)
+        #expect(SymbolParser.isMinified(source))
+    }
+
     @Test func facadeReturnsSymbolsForKnownSource() {
         // Tree-sitter is the only extractor now (T21) — the facade just unwraps and warns on a
         // grammar-build failure.
