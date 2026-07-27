@@ -18,6 +18,21 @@ import Foundation
         #expect(Language.detect(from: URL(fileURLWithPath: "/x/a.tsx")) == .tsx)
         #expect(Language.detect(from: URL(fileURLWithPath: "/x/a.mts")) == .typescript)
         #expect(Language.detect(from: URL(fileURLWithPath: "/x/a.cts")) == .typescript)
+        // JSX *is* native to the JavaScript grammar, so .js and .jsx share one dialect.
+        #expect(Language.detect(from: URL(fileURLWithPath: "/x/a.js"))  == .javascript)
+        #expect(Language.detect(from: URL(fileURLWithPath: "/x/a.jsx")) == .javascript)
+        #expect(Language.detect(from: URL(fileURLWithPath: "/x/a.mjs")) == .javascript)
+        #expect(Language.detect(from: URL(fileURLWithPath: "/x/a.cjs")) == .javascript)
+        #expect(Language.detect(from: URL(fileURLWithPath: "/x/a.JSX")) == .javascript)
+    }
+
+    /// Committed minified/bundled JS is a single line yielding thousands of junk symbols, and
+    /// `git ls-files` doesn't honour `RepoScanner.excludedDirs`. A size cap is still T7.
+    @Test func skipsMinifiedAndBundledJavaScript() {
+        #expect(Language.detect(from: URL(fileURLWithPath: "/x/vendor/jquery.min.js")) == nil)
+        #expect(Language.detect(from: URL(fileURLWithPath: "/x/dist/app.bundle.js")) == nil)
+        #expect(Language.detect(from: URL(fileURLWithPath: "/x/src/app.js")) == .javascript)
+        #expect(Language.detect(from: URL(fileURLWithPath: "/x/src/mine.js")) == .javascript)
     }
 
     @Test func detectIsCaseInsensitiveAndNilForUnknown() {

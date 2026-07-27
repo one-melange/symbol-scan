@@ -150,6 +150,42 @@ import Testing
         #expect(has(tsx, "App", .function))
     }
 
+    @Test func javascript() throws {
+        let s = try parse([
+            "export function doThing(x) {}",
+            "",
+            "export const arrow = (y) => y + 1;",
+            "",
+            "const legacy = function () {};",
+            "",
+            "function* gen() {}",
+            "",
+            "class Widget {",
+            "    render() {}",
+            "    #secret() {}",
+            "}",
+        ], .javascript)
+        #expect(has(s, "doThing", .function, 1))
+        #expect(has(s, "arrow", .function, 3))
+        #expect(has(s, "legacy", .function, 5))
+        #expect(has(s, "gen", .function, 7))
+        #expect(has(s, "Widget", .class, 9))    // JS names classes (identifier), TS (type_identifier)
+        #expect(has(s, "render", .method, 10))
+        // `private_property_identifier` spans the `#`, so that's the indexed name. Search is
+        // substring, so a query of "secret" still finds it.
+        #expect(has(s, "#secret", .method, 11))
+    }
+
+    /// Unlike TS/TSX, JSX is native to the JavaScript grammar — `.jsx` needs no separate dialect.
+    @Test func jsxInPlainJavaScriptNeedsNoSeparateGrammar() throws {
+        let s = try parse([
+            "export const Card = ({ t }) => <div className=\"c\">{t}</div>;",
+            "export function List() { return <ul><Card t=\"a\" /></ul>; }",
+        ], .javascript)
+        #expect(has(s, "Card", .function, 1))
+        #expect(has(s, "List", .function, 2))
+    }
+
     @Test func swift() throws {
         let s = try parse([
             "func freeFunc() {}",

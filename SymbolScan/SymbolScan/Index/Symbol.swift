@@ -105,19 +105,29 @@ enum Language: String, CaseIterable {
     case python     = "python"
     case typescript = "typescript"
     case tsx        = "tsx"          // TypeScript + JSX — a separate grammar (T20)
+    case javascript = "javascript"   // .js / .jsx — tree-sitter-javascript parses JSX natively,
+                                     // so unlike TS/TSX there's no separate JSX dialect (T8)
     case rust       = "rust"
     case go         = "go"
     case swift      = "swift"
 
     static func detect(from url: URL) -> Language? {
+        // Minified and bundled JS is routinely committed, and one such file yields thousands of
+        // junk one-character symbols from a single line. `git ls-files` is the primary enumeration
+        // path and doesn't honour `RepoScanner.excludedDirs`, so screen them by name here; a
+        // general file-size cap is T7.
+        let fileName = url.lastPathComponent.lowercased()
+        guard !fileName.hasSuffix(".min.js"), !fileName.hasSuffix(".bundle.js") else { return nil }
+
         switch url.pathExtension.lowercased() {
-        case "py":                  return .python
-        case "ts", "mts", "cts":    return .typescript
-        case "tsx":                 return .tsx
-        case "rs":                  return .rust
-        case "go":                  return .go
-        case "swift":               return .swift
-        default:                    return nil
+        case "py":                      return .python
+        case "ts", "mts", "cts":        return .typescript
+        case "tsx":                     return .tsx
+        case "js", "jsx", "mjs", "cjs": return .javascript
+        case "rs":                      return .rust
+        case "go":                      return .go
+        case "swift":                   return .swift
+        default:                        return nil
         }
     }
 }

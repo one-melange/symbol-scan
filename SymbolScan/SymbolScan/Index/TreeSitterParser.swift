@@ -4,6 +4,7 @@ import TreeSitterSwift
 import TreeSitterPython
 import TreeSitterTypeScript
 import TreeSitterTSX
+import TreeSitterJavaScript
 import TreeSitterRust
 import TreeSitterGo
 
@@ -91,6 +92,7 @@ enum TreeSitterParser {
         // reused — but a `Query` is bound to a `TSLanguage`, so it must be compiled and cached
         // separately.
         case .tsx:        tsLanguage = TSLanguage(language: tree_sitter_tsx());        queryText = typeScriptQuery
+        case .javascript: tsLanguage = TSLanguage(language: tree_sitter_javascript()); queryText = javaScriptQuery
         case .rust:       tsLanguage = TSLanguage(language: tree_sitter_rust());       queryText = rustQuery
         case .go:         tsLanguage = TSLanguage(language: tree_sitter_go());         queryText = goQuery
         case .swift:      tsLanguage = TSLanguage(language: tree_sitter_swift());      queryText = swiftQuery
@@ -133,7 +135,8 @@ enum TreeSitterParser {
         case .python: containers = ["class_definition"];                     functions = ["function_definition"]
         case .rust:   containers = ["impl_item", "trait_item"];              functions = ["function_item"]
         case .swift:  containers = ["class_declaration", "protocol_declaration"]; functions = ["function_declaration"]
-        case .go, .typescript, .tsx: return false   // these capture methods via a dedicated pattern
+        // These capture methods via a dedicated pattern, so ancestry never decides the kind.
+        case .go, .typescript, .tsx, .javascript: return false
         }
         // Skip the declaration node itself (nameNode.parent); walk its ancestors.
         var current = nameNode.parent?.parent
@@ -217,6 +220,23 @@ enum TreeSitterParser {
     (abstract_class_declaration name: (type_identifier) @class)
     (interface_declaration name: (type_identifier) @interface)
     (type_alias_declaration name: (type_identifier) @type)
+    (method_definition name: [(property_identifier) (private_property_identifier)] @method)
+    (variable_declarator name: (identifier) @arrowfn value: [(arrow_function) (function_expression)])
+    """
+
+    /// JavaScript (`.js`/`.jsx`). Deliberately **not** a copy of `typeScriptQuery`: JS names classes
+    /// with `(identifier)` where TS uses `(type_identifier)`, and has no `interface_declaration`,
+    /// `type_alias_declaration` or `abstract_class_declaration` at all. Referencing any of those
+    /// makes `Query(language:data:)` throw, which since T21 would silently zero out every `.js`
+    /// file — `everyDialectBuildsAGrammarAndQuery` guards exactly that.
+    ///
+    /// Known gap (shared with TypeScript): class-field arrow functions (`handleClick = () => {}`)
+    /// are `field_definition`/`property` in JS but `public_field_definition`/`name` in TS, and
+    /// neither dialect captures them today.
+    private static let javaScriptQuery = """
+    (function_declaration name: (identifier) @fn)
+    (generator_function_declaration name: (identifier) @fn)
+    (class_declaration name: (identifier) @class)
     (method_definition name: [(property_identifier) (private_property_identifier)] @method)
     (variable_declarator name: (identifier) @arrowfn value: [(arrow_function) (function_expression)])
     """
