@@ -65,3 +65,7 @@ fastlane/test_output
 *.DS_Store
 
 build/
+
+# Local, machine-specific build overrides (signing team, etc.).
+# Copy SymbolScan/Local.xcconfig.example to SymbolScan/Local.xcconfig to create it.
+Local.xcconfig

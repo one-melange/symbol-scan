@@ -13,9 +13,22 @@ A free Apple ID is enough (no paid Developer Program required):
 
 1. Xcode → **Settings → Accounts → "+" → Apple ID** → sign in. This registers a free
    **Personal Team**.
-2. Select the **SymbolScan** project → **SymbolScan** target → **Signing & Capabilities** →
-   check **Automatically manage signing** → pick your **(Personal Team)** in the **Team**
-   dropdown. Xcode writes `DEVELOPMENT_TEAM` into the project for you.
+2. Set your team **without editing the tracked project**: copy the template and drop in your
+   Team ID.
+
+   ```bash
+   cp SymbolScan/Local.xcconfig.example SymbolScan/Local.xcconfig
+   # then edit SymbolScan/Local.xcconfig: DEVELOPMENT_TEAM = <YOUR_TEAM_ID>
+   ```
+
+   `Local.xcconfig` is git-ignored and feeds `DEVELOPMENT_TEAM` into the build via the
+   tracked `SymbolScan/Config.xcconfig`, so your signing identity never lands in a commit.
+   Find your Team ID in **Settings → Accounts → your Apple ID → Team ID**.
+
+> Prefer the file over the GUI: setting the team through **Signing & Capabilities** writes
+> `DEVELOPMENT_TEAM` back into the tracked `project.pbxproj`, which re-introduces your team
+> into version control. If Xcode does that, move the value into `Local.xcconfig` and revert
+> the project change. (Automatic signing still works — the team just comes from the xcconfig.)
 
 Verify a build is properly signed (not ad-hoc):
 

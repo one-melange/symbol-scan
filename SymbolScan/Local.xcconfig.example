@@ -1,0 +1,5 @@
+// Copy this file to `Local.xcconfig` (git-ignored) and set your own Apple Development
+// team so local builds sign with a stable identity. Find your Team ID in Xcode under
+// Settings → Accounts → your Apple ID → the team's "Team ID" column, or leave it blank
+// to let automatic signing use a free Personal Team.
+DEVELOPMENT_TEAM =

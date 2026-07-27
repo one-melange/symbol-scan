@@ -1,0 +1,12 @@
+// Base build configuration for SymbolScan.
+//
+// Machine-specific overrides — most importantly your code-signing DEVELOPMENT_TEAM —
+// belong in Local.xcconfig, which is git-ignored. Copy Local.xcconfig.example to
+// Local.xcconfig and fill in your Apple Development team so local builds sign with a
+// stable identity. That stable signature is what keeps the macOS Accessibility grant
+// alive across rebuilds; without it you'd have to re-approve the app every time.
+//
+// The include is optional (note the `?`): CI and fresh checkouts that have no
+// Local.xcconfig still build, with an empty team — matching the CI flags
+// (CODE_SIGNING_ALLOWED=NO, DEVELOPMENT_TEAM="").
+#include? "Local.xcconfig"
