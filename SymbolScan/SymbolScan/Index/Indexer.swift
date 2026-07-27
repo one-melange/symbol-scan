@@ -27,7 +27,7 @@ enum Indexer {
         let fileCount: Int
     }
 
-    /// Full scan of `root`: parse source files into symbols, add file/directory entries (T18),
+    /// Full scan of `root`: parse source files into symbols, add file/directory entries,
     /// dedup, persist to the on-disk cache, and return the result. Throws `IndexError.notGitRepo`
     /// for a non-git directory, or `CancellationError` if a superseding (forced) re-index of the
     /// **same** repo cancelled this job.
@@ -50,7 +50,7 @@ enum Indexer {
             collected.append(contentsOf: fileSymbols)
         }
 
-        // T18: index every repo file (any type) and directory as its own entry, so paths are
+        // Index every repo file (any type) and directory as its own entry, so paths are
         // searchable/injectable alongside in-file symbols. Appended after code symbols so an
         // exact-name symbol match still ranks ahead of a same-named file/dir.
         try Task.checkCancellation()

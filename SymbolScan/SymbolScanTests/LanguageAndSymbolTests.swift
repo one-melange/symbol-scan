@@ -13,7 +13,7 @@ import Foundation
     }
 
     /// `Language` is the *grammar* key, not the language name: `.tsx` is TypeScript, but the TS
-    /// grammar can't parse JSX, so it needs its own dialect (T20).
+    /// grammar can't parse JSX, so it needs its own dialect.
     @Test func detectsDialectsThatShareALanguage() {
         #expect(Language.detect(from: URL(fileURLWithPath: "/x/a.tsx")) == .tsx)
         #expect(Language.detect(from: URL(fileURLWithPath: "/x/a.mts")) == .typescript)
@@ -27,7 +27,7 @@ import Foundation
     }
 
     /// Committed minified/bundled JS is a single line yielding thousands of junk symbols, and
-    /// `git ls-files` doesn't honour `RepoScanner.excludedDirs`. A size cap is still T7.
+    /// `git ls-files` doesn't honour `RepoScanner.excludedDirs`. A size cap is still TODO.
     @Test func skipsMinifiedAndBundledJavaScript() {
         #expect(Language.detect(from: URL(fileURLWithPath: "/x/vendor/jquery.min.js")) == nil)
         #expect(Language.detect(from: URL(fileURLWithPath: "/x/dist/app.bundle.js")) == nil)
@@ -48,7 +48,7 @@ import Foundation
         #expect(short.displayPath == "file.swift")
     }
 
-    // MARK: - injectionText (T17 / T18)
+    // MARK: - injectionText
 
     @Test func injectionTextForCodeSymbolIsPathLineName() {
         // Body only — no leading `@`. The prefix comes from the trigger the user typed (`@`/`#`

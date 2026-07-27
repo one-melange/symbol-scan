@@ -53,8 +53,8 @@ import Foundation
         #expect(!names.contains("dep.swift"))   // excluded directory
     }
 
-    /// Enumeration filters through `Language.detect`, so the dialects added in T20/T8 have to
-    /// survive it — a grammar wired up in `TreeSitterParser` is useless if the file never reaches
+    /// Enumeration filters through `Language.detect`, so the `.tsx` and `.js`/`.jsx` dialects have
+    /// to survive it — a grammar wired up in `TreeSitterParser` is useless if the file never reaches
     /// the parser. Also pins the minified-name screen at the enumeration layer, where it saves the
     /// file read entirely.
     @Test func enumerateSourceFilesIncludesNewDialectsAndSkipsMinified() async throws {

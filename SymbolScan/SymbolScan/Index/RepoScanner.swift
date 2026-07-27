@@ -30,7 +30,7 @@ class RepoScanner {
     }
 
     /// Every tracked + untracked (non-ignored) file — any type, not just parseable source —
-    /// as repo-root-relative paths. Used to build the file/directory index entries (T18).
+    /// as repo-root-relative paths. Used to build the file/directory index entries.
     /// Same enumeration as `enumerateSourceFiles`, minus the language filter.
     func enumerateAllFiles() async throws -> [String] {
         if isGitRepo, let paths = try? await gitLsFilesRaw() {
