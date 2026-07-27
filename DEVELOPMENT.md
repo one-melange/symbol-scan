@@ -49,8 +49,8 @@ Work on a feature branch with Claude Code, then build and run from Xcode:
 ## Testing
 
 Unit and headless-interaction tests live in the **SymbolScanTests** target (Swift Testing).
-They cover the pure logic — symbol matching/ranking, the per-language `RegexParser`,
-`RepoScanner` path helpers, language detection — and drive the real `SymbolPickerViewModel`
+They cover the pure logic — symbol matching/ranking, the per-language Tree-sitter queries in
+`TreeSitterParser`, `RepoScanner` path helpers, language detection — and drive the real `SymbolPickerViewModel`
 + `SymbolIndex` through the picker flow (type → filter → arrow → select) without any UI,
 git, or system permissions.
 

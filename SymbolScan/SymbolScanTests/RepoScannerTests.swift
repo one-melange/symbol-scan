@@ -4,24 +4,6 @@ import Foundation
 
 @Suite struct RepoScannerTests {
 
-    private func makeTempDir() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ss-test-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
-    }
-
-    private func runGit(_ args: [String], in dir: URL) throws {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        p.arguments = args
-        p.currentDirectoryURL = dir
-        p.standardOutput = FileHandle.nullDevice
-        p.standardError = FileHandle.nullDevice
-        try p.run()
-        p.waitUntilExit()
-    }
-
     @Test func relativePathStripsRootPrefix() {
         let scanner = RepoScanner(root: URL(fileURLWithPath: "/tmp/repo"))
         #expect(scanner.relativePath(for: URL(fileURLWithPath: "/tmp/repo/src/a.swift")) == "src/a.swift")
@@ -30,7 +12,7 @@ import Foundation
     }
 
     @Test func findRepoRootWalksUpToDotGit() throws {
-        let base = try makeTempDir()
+        let base = try TestSupport.makeTempDir()
         defer { try? FileManager.default.removeItem(at: base) }
         let nested = base.appendingPathComponent("a/b/c")
         try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
@@ -44,7 +26,7 @@ import Foundation
     }
 
     @Test func isGitRepoReflectsDotGit() throws {
-        let base = try makeTempDir()
+        let base = try TestSupport.makeTempDir()
         defer { try? FileManager.default.removeItem(at: base) }
         #expect(RepoScanner(root: base).isGitRepo == false)
         try FileManager.default.createDirectory(at: base.appendingPathComponent(".git"),
@@ -53,7 +35,7 @@ import Foundation
     }
 
     @Test func enumerateSourceFilesFiltersAndExcludes() async throws {
-        let base = try makeTempDir()
+        let base = try TestSupport.makeTempDir()
         defer { try? FileManager.default.removeItem(at: base) }
         let nodeModules = base.appendingPathComponent("node_modules")
         try FileManager.default.createDirectory(at: nodeModules, withIntermediateDirectories: true)
@@ -71,8 +53,40 @@ import Foundation
         #expect(!names.contains("dep.swift"))   // excluded directory
     }
 
+    /// Enumeration filters through `Language.detect`, so the dialects added in T20/T8 have to
+    /// survive it — a grammar wired up in `TreeSitterParser` is useless if the file never reaches
+    /// the parser. Also pins the minified-name screen at the enumeration layer, where it saves the
+    /// file read entirely.
+    @Test func enumerateSourceFilesIncludesNewDialectsAndSkipsMinified() async throws {
+        let base = try TestSupport.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let sources = [
+            "App.tsx": "export const App = () => <div />;",
+            "util.ts": "export function u() {}",
+            "script.js": "export function s() {}",
+            "widget.jsx": "export const W = () => <p />;",
+            "cfg.cjs": "module.exports = {};",
+            "vendor.min.js": "function a(){}",
+            "app.bundle.js": "function b(){}",
+        ]
+        for (name, body) in sources {
+            try body.write(to: base.appendingPathComponent(name), atomically: true, encoding: .utf8)
+        }
+
+        // No .git in this temp dir → exercises the FileManager fallback path.
+        let names = Set(try await RepoScanner(root: base).enumerateSourceFiles().map(\.lastPathComponent))
+        #expect(names.contains("App.tsx"))
+        #expect(names.contains("util.ts"))
+        #expect(names.contains("script.js"))
+        #expect(names.contains("widget.jsx"))
+        #expect(names.contains("cfg.cjs"))
+        #expect(!names.contains("vendor.min.js"))
+        #expect(!names.contains("app.bundle.js"))
+    }
+
     @Test func enumerateAllFilesKeepsNonSourceButHonorsExclusions() async throws {
-        let base = try makeTempDir()
+        let base = try TestSupport.makeTempDir()
         defer { try? FileManager.default.removeItem(at: base) }
         let nodeModules = base.appendingPathComponent("node_modules")
         try FileManager.default.createDirectory(at: nodeModules, withIntermediateDirectories: true)
@@ -95,9 +109,9 @@ import Foundation
     /// forever. This builds a real git repo whose output is well over 64KB and asserts it returns.
     /// If the deadlock regresses, this test hangs and fails the run.
     @Test func enumerateAllFilesDoesNotDeadlockOnLargeGitOutput() async throws {
-        let base = try makeTempDir()
+        let base = try TestSupport.makeTempDir()
         defer { try? FileManager.default.removeItem(at: base) }
-        try runGit(["init", "-q"], in: base)   // real repo → exercises the git ls-files (Process/Pipe) path
+        try TestSupport.runGit(["init", "-q"], in: base)   // real repo → exercises the git ls-files (Process/Pipe) path
 
         // ~2000 files × ~50-char paths ≈ 100KB of `git ls-files` output, comfortably past the pipe
         // buffer. Untracked files are surfaced via --others (no commit needed).

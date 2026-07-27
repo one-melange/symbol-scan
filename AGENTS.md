@@ -25,19 +25,27 @@ EventTap (global CGEventTap; @ / # / ⌘⇧O)
               └─> SymbolIndex.search → SymbolMatcher  (strict-substring ranking)
                     ▲
                     │ index built by:
-              RepoScanner (git ls-files) ──> RegexParser (per-language symbol extraction)
+              RepoScanner (git ls-files) ──> Indexer ──> SymbolParser/TreeSitterParser
+                                                       (per-language symbol extraction)
         └─> TextInjector (inject keystrokes into frontmost app, or clipboard fallback)
 ```
 
 Source lives under `SymbolScan/SymbolScan/`:
 - `App/` — `AppDelegate` (lifecycle, permissions, wiring), `OverlayWindow` (window + controller)
 - `Input/` — `EventTap` (CGEventTap), `TextInjector` (inject / clipboard)
-- `Index/` — `Symbol`/`Language`/`SymbolKind`, `RepoScanner`, `RegexParser`, `SymbolIndex` (+ `SymbolMatcher`)
+- `Index/` — `Symbol`/`Language`/`SymbolKind`, `RepoScanner`, `TreeSitterParser` (+ the
+  `SymbolParser` facade), `Indexer` (off-main index build), `SymbolIndex` (+ `SymbolMatcher`,
+  `IndexCache`)
 - `UI/` — `SymbolPickerView`, `SymbolPickerViewModel`
 - `Capture/` — `OCREngine`, `ScreenCapture`. **Currently unused / dead code** (no callers); see `TASKS.md` T9 before relying on it.
 
-Languages parsed by `RegexParser` (regex-based, not Tree-sitter): **Swift, Python,
-TypeScript (`.ts`/`.tsx`), Rust, Go**. JavaScript is not yet supported.
+Symbols are extracted by `TreeSitterParser` from real Tree-sitter grammars: **Swift, Python,
+TypeScript (`.ts`), TSX (`.tsx`), JavaScript (`.js`/`.jsx`), Rust, Go**.
+
+`Language` is the **grammar key**, not a display value — `.typescript` and `.tsx` are the same
+language but different grammars (the TS grammar can't parse JSX), while `.js` and `.jsx` share
+one, because the JavaScript grammar handles JSX natively. There is **no fallback extractor**:
+a grammar that fails to build logs once and indexes nothing for that language.
 
 ## Build / run / test
 

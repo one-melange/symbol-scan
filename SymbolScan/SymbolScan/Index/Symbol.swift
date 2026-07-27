@@ -93,40 +93,41 @@ enum SymbolKind: String, CaseIterable, Codable {
 
 // MARK: - Language
 
+/// The **parse dialect** of a source file — i.e. which Tree-sitter grammar to use. Deliberately
+/// not "programming language": `.typescript` and `.tsx` are the same language but *different*
+/// grammars (the TS grammar can't parse JSX — it error-recovers past it, so symbols silently
+/// vanish rather than failing loudly; that was T20).
+///
+/// Nothing renders this value and nothing persists it (`Symbol`, the only `Codable` type here, has
+/// no language field), so the raw values are free to change. Its only two jobs are the extension
+/// filter below and grammar selection in `TreeSitterParser.build`.
 enum Language: String, CaseIterable {
     case python     = "python"
     case typescript = "typescript"
+    case tsx        = "tsx"          // TypeScript + JSX — a separate grammar (T20)
+    case javascript = "javascript"   // .js / .jsx — tree-sitter-javascript parses JSX natively,
+                                     // so unlike TS/TSX there's no separate JSX dialect (T8)
     case rust       = "rust"
     case go         = "go"
     case swift      = "swift"
 
     static func detect(from url: URL) -> Language? {
+        // Minified and bundled JS is routinely committed, and one such file yields thousands of
+        // junk one-character symbols from a single line. `git ls-files` is the primary enumeration
+        // path and doesn't honour `RepoScanner.excludedDirs`, so screen them by name here; a
+        // general file-size cap is T7.
+        let fileName = url.lastPathComponent.lowercased()
+        guard !fileName.hasSuffix(".min.js"), !fileName.hasSuffix(".bundle.js") else { return nil }
+
         switch url.pathExtension.lowercased() {
-        case "py":              return .python
-        case "ts", "tsx":       return .typescript
-        case "rs":              return .rust
-        case "go":              return .go
-        case "swift":           return .swift
-        default:                return nil
+        case "py":                      return .python
+        case "ts", "mts", "cts":        return .typescript
+        case "tsx":                     return .tsx
+        case "js", "jsx", "mjs", "cjs": return .javascript
+        case "rs":                      return .rust
+        case "go":                      return .go
+        case "swift":                   return .swift
+        default:                        return nil
         }
     }
-
-    var extensions: [String] {
-        switch self {
-        case .python:       return ["py"]
-        case .typescript:   return ["ts", "tsx"]
-        case .rust:         return ["rs"]
-        case .go:           return ["go"]
-        case .swift:        return ["swift"]
-        }
-    }
-}
-
-// MARK: - File Entry
-
-struct FileEntry {
-    let path: String        // relative to repo root
-    let language: Language
-    var symbols: [Symbol]
-    var indexedAt: Date
 }
