@@ -8,8 +8,8 @@ import TreeSitterJavaScript
 import TreeSitterRust
 import TreeSitterGo
 
-/// Tree-sitter–based symbol extractor (T16) — the only extractor since T21 removed the regex
-/// fallback. Symbols come from a real parse tree, so method-vs-function is decided by node
+/// Tree-sitter–based symbol extractor — the only extractor now that the regex fallback has been
+/// removed. Symbols come from a real parse tree, so method-vs-function is decided by node
 /// ancestry rather than indentation heuristics, and declarations aren't missed/misread by
 /// line-oriented regex.
 ///
@@ -227,8 +227,8 @@ enum TreeSitterParser {
     /// JavaScript (`.js`/`.jsx`). Deliberately **not** a copy of `typeScriptQuery`: JS names classes
     /// with `(identifier)` where TS uses `(type_identifier)`, and has no `interface_declaration`,
     /// `type_alias_declaration` or `abstract_class_declaration` at all. Referencing any of those
-    /// makes `Query(language:data:)` throw, which since T21 would silently zero out every `.js`
-    /// file — `everyDialectBuildsAGrammarAndQuery` guards exactly that.
+    /// makes `Query(language:data:)` throw, which with no regex fallback would silently zero out
+    /// every `.js` file — `everyDialectBuildsAGrammarAndQuery` guards exactly that.
     ///
     /// Known gap (shared with TypeScript): class-field arrow functions (`handleClick = () => {}`)
     /// are `field_definition`/`property` in JS but `public_field_definition`/`name` in TS, and
@@ -251,8 +251,8 @@ enum TreeSitterParser {
 
 // MARK: - Parser facade
 
-/// Single entry point the index uses. Tree-sitter is the only extractor: T21 removed the regex
-/// fallback because it was unreachable — `TreeSitterParser.parse` returns nil only when a grammar
+/// Single entry point the index uses. Tree-sitter is the only extractor: the regex fallback was
+/// removed because it was unreachable — `TreeSitterParser.parse` returns nil only when a grammar
 /// or query fails to *build*, which is deterministic and cached-on-success, and a merely broken
 /// source file still parses to `[]` via error recovery.
 enum SymbolParser {
@@ -263,7 +263,7 @@ enum SymbolParser {
 
     /// Non-optional: a nil from `TreeSitterParser` is a build failure for `language` as a whole,
     /// not for this file, so there's nothing to fall back to. Report it once per language rather
-    /// than silently returning `[]` — silence is exactly how the `.tsx` bug (T20) went unnoticed.
+    /// than silently returning `[]` — silence is exactly how the `.tsx` routing bug went unnoticed.
     static func parse(source: String, language: Language, path: String) -> [Symbol] {
         guard !isMinified(source) else { return [] }
         guard let symbols = TreeSitterParser.parse(source: source, language: language, path: path) else {
@@ -283,7 +283,7 @@ enum SymbolParser {
     /// picker. Name patterns don't catch it — Vite emits `index-DJ7HgGZS.js`, not `*.min.js` — so
     /// screen on the shape of the content instead. Checked here rather than in `Language.detect`
     /// because the source is already in hand, keeping detection pure and IO-free. A general
-    /// file-size cap is still T7.
+    /// file-size cap is still TODO.
     static func isMinified(_ source: String) -> Bool {
         var lineLength = 0
         for char in source.unicodeScalars {

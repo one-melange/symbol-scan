@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import SymbolScan
 
-/// Exercises the Tree-sitter extractor (T16) via the pure `parse(source:language:path:)` seam —
+/// Exercises the Tree-sitter extractor via the pure `parse(source:language:path:)` seam —
 /// no temp files. Source is built with explicit "\n" joins so indentation/line numbers are exact.
 /// Focuses on cases the old regex extractor got wrong: method-vs-function by real nesting, Go
 /// struct/interface/alias distinction, Rust impl methods, TS arrow consts, Swift struct/enum/actor.
@@ -144,7 +144,7 @@ import Testing
         #expect(has(s, "render", .method, 10))
     }
 
-    /// The T20 bug: `.tsx` was routed to the plain TypeScript grammar, which can't parse JSX.
+    /// The `.tsx` bug: `.tsx` was routed to the plain TypeScript grammar, which can't parse JSX.
     /// Tree-sitter error-recovers rather than failing, so no fallback ever fired — symbols just
     /// silently disappeared. Asserted as "strictly fewer" rather than an exact count so future
     /// grammar-recovery improvements don't make this brittle.
@@ -224,7 +224,7 @@ import Testing
         #expect(has(s, "MyAlias", .type))
     }
 
-    // MARK: - Signatures (T21)
+    // MARK: - Signatures
 
     @Test func goMethodSignatureCarriesTheReceiverType() throws {
         let s = try parse([
@@ -255,7 +255,7 @@ import Testing
 
     /// Every dialect must produce a buildable grammar *and* a compilable query. `parse` returns nil
     /// only on a build failure, so this catches a query referencing a node type its grammar doesn't
-    /// have — which, since T21 removed the regex fallback, would otherwise just mean "that language
+    /// have — which, with no regex fallback, would otherwise just mean "that language
     /// silently indexes nothing".
     @Test func everyDialectBuildsAGrammarAndQuery() {
         for lang in Language.allCases {
@@ -264,7 +264,7 @@ import Testing
         }
     }
 
-    // MARK: - Minified-source guard (T8)
+    // MARK: - Minified-source guard
 
     @Test func minifiedSourceIsSkipped() {
         // One long line of mangled declarations, as a bundler emits.
@@ -289,7 +289,7 @@ import Testing
     }
 
     @Test func facadeReturnsSymbolsForKnownSource() {
-        // Tree-sitter is the only extractor now (T21) — the facade just unwraps and warns on a
+        // Tree-sitter is the only extractor now — the facade just unwraps and warns on a
         // grammar-build failure.
         let s = SymbolParser.parse(source: "func hello() {}", language: .swift, path: "f")
         #expect(s.contains { $0.name == "hello" && $0.kind == .function })

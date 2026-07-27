@@ -29,11 +29,39 @@ jobs:
           xcodebuild test \
             -scheme SymbolScan \
             -destination 'platform=macOS' \
+            -enableCodeCoverage YES \
             -resultBundlePath TestResults.xcresult \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM=""
+
+      - name: Coverage report + gate
+        if: ${{ !cancelled() }}
+        working-directory: SymbolScan
+        env:
+          # Minimum app-target line coverage. A ratchet, not an aspiration: raise it as
+          # coverage grows, never lower it to make a red build green. It sits below the
+          # measured number on purpose — the untested surface is the AppKit lifecycle
+          # (AppDelegate, OverlayWindow), the global CGEventTap, IndexNotifier, and the
+          # unused Capture/ code; the pure indexing/matching logic is near-fully covered.
+          COVERAGE_MIN: "28"
+        run: |
+          set -o pipefail
+          # Per-file breakdown → job log, and a compact target summary → the run's summary page.
+          xcrun xccov view --report TestResults.xcresult
+          {
+            echo '### Code coverage — SymbolScan.app'
+            echo '```'
+            xcrun xccov view --report --only-targets TestResults.xcresult
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          # Gate on the app target's line coverage.
+          pct=$(xcrun xccov view --report --json TestResults.xcresult \
+            | jq -r '.targets[] | select(.name == "SymbolScan.app") | .lineCoverage * 100')
+          printf 'App-target line coverage: %.2f%% (minimum %s%%)\n' "$pct" "$COVERAGE_MIN"
+          awk -v p="$pct" -v m="$COVERAGE_MIN" 'BEGIN { exit (p+0 < m+0) ? 1 : 0 }' \
+            || { echo "::error::Coverage $(printf '%.2f' "$pct")% is below the ${COVERAGE_MIN}% minimum"; exit 1; }
 
       - name: Upload test results
         if: ${{ !cancelled() }}

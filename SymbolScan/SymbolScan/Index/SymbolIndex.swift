@@ -206,9 +206,9 @@ enum SymbolMatcher {
 /// the filesystem.
 enum IndexCache {
     /// Bump when the payload shape *or content* changes; a mismatch makes `decode` return nil →
-    /// forces a rescan. v2: added `.file`/`.directory` entries (T18). v3: symbols now come from
-    /// Tree-sitter (T16), so regex-built caches must be discarded. v4: `.tsx` is parsed with the
-    /// TSX grammar and `.js`/`.jsx` are indexed (T20/T8) — caches built before that are missing
+    /// forces a rescan. v2: added `.file`/`.directory` entries. v3: symbols now come from
+    /// Tree-sitter, so regex-built caches must be discarded. v4: `.tsx` is parsed with the
+    /// TSX grammar and `.js`/`.jsx` are indexed — caches built before that are missing
     /// those symbols entirely, and would otherwise be served forever.
     static let version = 4
 

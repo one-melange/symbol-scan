@@ -2,9 +2,9 @@ import Testing
 import Foundation
 @testable import SymbolScan
 
-/// Covers `Indexer.buildIndex` — the scan → parse → dedup → cache composition (T22). Every piece it
+/// Covers `Indexer.buildIndex` — the scan → parse → dedup → cache composition. Every piece it
 /// calls is unit-tested elsewhere; what's tested *here* is that they compose. That distinction is
-/// not academic: the minified-bundle bug (T8) slipped through with every individual unit behaving
+/// not academic: the minified-bundle bug slipped through with every individual unit behaving
 /// correctly, and only showed up when the whole pipeline ran against a real repo.
 ///
 /// So these run against a real temp git repo with real grammars and real file IO, deliberately —
@@ -80,12 +80,12 @@ import Foundation
     @Test func symbolsCarryRepoRelativePaths() async throws {
         let (result, root, cacheBase) = try await build()
         defer { cleanUp(root, cacheBase) }
-        // T2's regression: paths must be repo-relative, not bare filenames or absolute.
+        // Regression: paths must be repo-relative, not bare filenames or absolute.
         let widget = try #require(result.symbols.first { $0.name == "Widget" && $0.kind == .function })
         #expect(widget.filePath == "ui/Widget.tsx")
     }
 
-    // MARK: - Minified bundles (T8)
+    // MARK: - Minified bundles
 
     /// The regression that matters. Two committed 4.9 MB Vite bundles once contributed 16,901 junk
     /// symbols to a real index; no unit test caught it because each unit was correct in isolation.
@@ -104,7 +104,7 @@ import Foundation
         #expect(result.symbols.contains { $0.name == "index-DJ7HgGZS.js" && $0.kind == .file })
     }
 
-    // MARK: - File / directory entries (T18)
+    // MARK: - File / directory entries
 
     @Test func includesFileAndDirectoryEntries() async throws {
         let (result, root, cacheBase) = try await build()
@@ -182,7 +182,7 @@ import Foundation
         }
     }
 
-    /// A forced re-index cancels the in-flight job for the same repo (T19), so `buildIndex` must
+    /// A forced re-index cancels the in-flight job for the same repo, so `buildIndex` must
     /// honour cancellation rather than running to completion and overwriting the cache.
     @Test func cancellationStopsTheBuild() async throws {
         let root = try makeFixtureRepo()
