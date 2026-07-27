@@ -141,8 +141,49 @@ import Testing
         #expect(has(s, "MyAlias", .type))
     }
 
+    // MARK: - Signatures (T21)
+
+    @Test func goMethodSignatureCarriesTheReceiverType() throws {
+        let s = try parse([
+            "package main",
+            "",
+            "type Server struct{}",
+            "type Conn struct{}",
+            "",
+            "func (s *Server) Close() {}",
+            "func (c Conn) Close() {}",
+        ], .go)
+        // Two same-named methods on different receivers: the signature is the only thing that
+        // tells them apart in the picker.
+        let closes = s.filter { $0.name == "Close" }
+        #expect(closes.count == 2)
+        #expect(closes.contains { $0.signature == "(*Server) Close" })
+        #expect(closes.contains { $0.signature == "(Conn) Close" })
+    }
+
+    @Test func nonGoSymbolsHaveNoSignature() throws {
+        let swift = try parse(["func hello() {}"], .swift)
+        #expect(swift.first { $0.name == "hello" }?.signature == nil)
+        let go = try parse(["package main", "func Free() {}"], .go)
+        #expect(go.first { $0.name == "Free" }?.signature == nil)   // plain func, no receiver
+    }
+
+    // MARK: - Facade / grammar health
+
+    /// Every dialect must produce a buildable grammar *and* a compilable query. `parse` returns nil
+    /// only on a build failure, so this catches a query referencing a node type its grammar doesn't
+    /// have — which, since T21 removed the regex fallback, would otherwise just mean "that language
+    /// silently indexes nothing".
+    @Test func everyDialectBuildsAGrammarAndQuery() {
+        for lang in Language.allCases {
+            #expect(TreeSitterParser.parse(source: "", language: lang, path: "f") != nil,
+                    "no grammar/query for \(lang.rawValue)")
+        }
+    }
+
     @Test func facadeReturnsSymbolsForKnownSource() {
-        // SymbolParser tries Tree-sitter, then RegexParser — either way this must yield the symbol.
+        // Tree-sitter is the only extractor now (T21) — the facade just unwraps and warns on a
+        // grammar-build failure.
         let s = SymbolParser.parse(source: "func hello() {}", language: .swift, path: "f")
         #expect(s.contains { $0.name == "hello" && $0.kind == .function })
     }

@@ -16,7 +16,6 @@
 		8EDE63362FE5B2FF0024E0D5 /* TextInjector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EDE632A2FE5B2FF0024E0D5 /* TextInjector.swift */; };
 		8EDE63372FE5B2FF0024E0D5 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EDE631E2FE5B2FF0024E0D5 /* AppDelegate.swift */; };
 		8EDE63382FE5B2FF0024E0D5 /* OverlayWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EDE631F2FE5B2FF0024E0D5 /* OverlayWindow.swift */; };
-		8EDE63392FE5B2FF0024E0D5 /* RegexParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EDE63242FE5B2FF0024E0D5 /* RegexParser.swift */; };
 		8EDE633A2FE5B2FF0024E0D5 /* Symbol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EDE63262FE5B2FF0024E0D5 /* Symbol.swift */; };
 		8EDE633B2FE5B2FF0024E0D5 /* SymbolPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EDE632C2FE5B2FF0024E0D5 /* SymbolPickerView.swift */; };
 		8EDE633E2FE5B6410024E0D5 /* SwiftTreeSitter in Frameworks */ = {isa = PBXBuildFile; productRef = 8EDE633D2FE5B6410024E0D5 /* SwiftTreeSitter */; };
@@ -49,7 +48,6 @@
 		8EDE631F2FE5B2FF0024E0D5 /* OverlayWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayWindow.swift; sourceTree = "<group>"; };
 		8EDE63212FE5B2FF0024E0D5 /* OCREngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCREngine.swift; sourceTree = "<group>"; };
 		8EDE63222FE5B2FF0024E0D5 /* ScreenCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenCapture.swift; sourceTree = "<group>"; };
-		8EDE63242FE5B2FF0024E0D5 /* RegexParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RegexParser.swift; sourceTree = "<group>"; };
 		8EDE63252FE5B2FF0024E0D5 /* RepoScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepoScanner.swift; sourceTree = "<group>"; };
 		8EDE63262FE5B2FF0024E0D5 /* Symbol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Symbol.swift; sourceTree = "<group>"; };
 		8EDE63272FE5B2FF0024E0D5 /* SymbolIndex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SymbolIndex.swift; sourceTree = "<group>"; };
@@ -136,7 +134,6 @@
 		8EDE63282FE5B2FF0024E0D5 /* Index */ = {
 			isa = PBXGroup;
 			children = (
-				8EDE63242FE5B2FF0024E0D5 /* RegexParser.swift */,
 				AA0600000000000000000010 /* TreeSitterParser.swift */,
 				AA0600000000000000000020 /* Indexer.swift */,
 				8EDE63252FE5B2FF0024E0D5 /* RepoScanner.swift */,
@@ -313,7 +310,6 @@
 				8EDE63362FE5B2FF0024E0D5 /* TextInjector.swift in Sources */,
 				8EDE63372FE5B2FF0024E0D5 /* AppDelegate.swift in Sources */,
 				8EDE63382FE5B2FF0024E0D5 /* OverlayWindow.swift in Sources */,
-				8EDE63392FE5B2FF0024E0D5 /* RegexParser.swift in Sources */,
 				AA0600000000000000000011 /* TreeSitterParser.swift in Sources */,
 				AA0600000000000000000021 /* Indexer.swift in Sources */,
 				AA0600000000000000000031 /* IndexNotifier.swift in Sources */,

@@ -6,14 +6,15 @@ import TreeSitterTypeScript
 import TreeSitterRust
 import TreeSitterGo
 
-/// Tree-sitter–based symbol extractor (T16). Produces the same `[Symbol]` as `RegexParser`
-/// but from a real parse tree, so method-vs-function is decided by node ancestry rather than
-/// indentation heuristics, and declarations aren't missed/misread by line-oriented regex.
+/// Tree-sitter–based symbol extractor (T16) — the only extractor since T21 removed the regex
+/// fallback. Symbols come from a real parse tree, so method-vs-function is decided by node
+/// ancestry rather than indentation heuristics, and declarations aren't missed/misread by
+/// line-oriented regex.
 ///
-/// The public boundary mirrors `RegexParser.parse(source:language:path:)` but returns an
-/// optional: `nil` signals "couldn't parse with tree-sitter" (grammar load, `setLanguage`, or
-/// query compilation failed) so `SymbolParser` can fall back to the regex extractor. It never
-/// throws.
+/// `parse` returns an optional, but `nil` does **not** mean "this file failed": tree-sitter
+/// error-recovers, so a syntactically broken file still yields `[]`. `nil` means the *grammar or
+/// query for this language failed to build* — deterministic and cached-on-success, so it affects
+/// every file of that language. `SymbolParser` turns that into a one-time warning. It never throws.
 ///
 /// Per-language grammars + compiled queries are cached (query compilation is expensive). The
 /// pure query text + kind-mapping logic is intentionally free of `@MainActor`/IO so it is
@@ -46,11 +47,14 @@ enum TreeSitterParser {
                 // String through it rather than any byte offset.
                 guard let r = Range<String.Index>(node.range, in: source) else { continue }
                 guard let kind = kind(forTag: tag, nameNode: node, language: language) else { continue }
+                let name = String(source[r])
                 symbols.append(Symbol(
-                    name: String(source[r]),
+                    name: name,
                     kind: kind,
                     filePath: path,
-                    line: Int(node.pointRange.lowerBound.row) + 1   // tree-sitter rows are 0-based
+                    line: Int(node.pointRange.lowerBound.row) + 1,  // tree-sitter rows are 0-based
+                    signature: signature(forTag: tag, nameNode: node, name: name,
+                                         language: language, source: source)
                 ))
             }
         }
@@ -136,6 +140,22 @@ enum TreeSitterParser {
         return false
     }
 
+    /// Optional disambiguating text rendered under the name in the picker (`SymbolPickerView`).
+    /// Only Go methods get one: `(*Server) Close` and `(Conn) Close` are otherwise indistinguishable
+    /// in the results list apart from their line numbers. Everything else stays nil — the regex
+    /// extractor's Python `def f(a, b)` isn't worth an extra node walk per definition, since name +
+    /// `file:line` already identify it.
+    private static func signature(forTag tag: String, nameNode: Node, name: String,
+                                  language: Language, source: String) -> String? {
+        guard language == .go, tag == "method",
+              let decl = nameNode.parent, decl.nodeType == "method_declaration",
+              let receiver = decl.child(byFieldName: "receiver"),   // parameter_list
+              let param = receiver.namedChild(at: 0),               // parameter_declaration
+              let type = param.child(byFieldName: "type"),          // type_identifier | pointer_type
+              let r = Range<String.Index>(type.range, in: source) else { return nil }
+        return "(\(source[r])) \(name)"
+    }
+
     /// Go `type Foo <...>`: distinguish struct / interface / plain alias by the `type_spec`'s
     /// `type` child.
     private static func goTypeKind(_ nameNode: Node) -> SymbolKind {
@@ -203,17 +223,37 @@ enum TreeSitterParser {
 
 // MARK: - Parser facade
 
-/// Single entry point the index uses. Tries Tree-sitter first (T16) and falls back to the regex
-/// extractor if a grammar can't parse the source, so indexing degrades gracefully instead of
-/// producing nothing. Mirrors `RegexParser`'s boundary so it's a drop-in swap at the call sites.
+/// Single entry point the index uses. Tree-sitter is the only extractor: T21 removed the regex
+/// fallback because it was unreachable — `TreeSitterParser.parse` returns nil only when a grammar
+/// or query fails to *build*, which is deterministic and cached-on-success, and a merely broken
+/// source file still parses to `[]` via error recovery.
 enum SymbolParser {
     static func parse(url: URL, language: Language, relativePath: String) throws -> [Symbol] {
         let source = try String(contentsOf: url, encoding: .utf8)
         return parse(source: source, language: language, path: relativePath)
     }
 
+    /// Non-optional: a nil from `TreeSitterParser` is a build failure for `language` as a whole,
+    /// not for this file, so there's nothing to fall back to. Report it once per language rather
+    /// than silently returning `[]` — silence is exactly how the `.tsx` bug (T20) went unnoticed.
     static func parse(source: String, language: Language, path: String) -> [Symbol] {
-        TreeSitterParser.parse(source: source, language: language, path: path)
-            ?? RegexParser.parse(source: source, language: language, path: path)
+        guard let symbols = TreeSitterParser.parse(source: source, language: language, path: path) else {
+            reportGrammarFailure(language)
+            return []
+        }
+        return symbols
+    }
+
+    // Indexing runs on a detached task, so the once-per-language guard needs a lock — same pattern
+    // as `TreeSitterParser.cacheLock`.
+    private static let reportLock = NSLock()
+    private static var reportedFailures: Set<Language> = []
+
+    private static func reportGrammarFailure(_ language: Language) {
+        reportLock.lock()
+        defer { reportLock.unlock() }
+        guard reportedFailures.insert(language).inserted else { return }
+        print("⚠️ Tree-sitter grammar/query failed to build for \(language.rawValue) — "
+              + "no symbols will be indexed for those files")
     }
 }
