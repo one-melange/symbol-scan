@@ -256,7 +256,17 @@ enum TreeSitterParser {
 /// or query fails to *build*, which is deterministic and cached-on-success, and a merely broken
 /// source file still parses to `[]` via error recovery.
 enum SymbolParser {
+    /// Files larger than this are skipped before we even read them. Catches large generated/data
+    /// files (the `isMinified` line-length check only fires *after* the whole file is read into a
+    /// `String`, which is itself wasteful for a multi-megabyte blob). Well above any hand-written
+    /// source file; the caller still records an oversized file as a searchable `.file` entry.
+    static let maxParseFileSizeBytes = 2 * 1024 * 1024
+
     static func parse(url: URL, language: Language, relativePath: String) throws -> [Symbol] {
+        if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+           size > maxParseFileSizeBytes {
+            return []
+        }
         let source = try String(contentsOf: url, encoding: .utf8)
         return parse(source: source, language: language, path: relativePath)
     }
@@ -282,8 +292,9 @@ enum SymbolParser {
     /// Vite bundles alone yielded 16,901 junk symbols (`ur`, `Rr`, `Sm`, …) that would swamp the
     /// picker. Name patterns don't catch it — Vite emits `index-DJ7HgGZS.js`, not `*.min.js` — so
     /// screen on the shape of the content instead. Checked here rather than in `Language.detect`
-    /// because the source is already in hand, keeping detection pure and IO-free. A general
-    /// file-size cap is still TODO.
+    /// because the source is already in hand, keeping detection pure and IO-free. Complements the
+    /// `maxParseFileSizeBytes` pre-read byte cap above (which catches large files by size before
+    /// they're read at all); this catches sub-cap files that are minified onto one long line.
     static func isMinified(_ source: String) -> Bool {
         var lineLength = 0
         for char in source.unicodeScalars {

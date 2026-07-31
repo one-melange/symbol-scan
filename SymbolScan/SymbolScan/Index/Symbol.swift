@@ -113,9 +113,9 @@ enum Language: String, CaseIterable {
 
     static func detect(from url: URL) -> Language? {
         // Minified and bundled JS is routinely committed, and one such file yields thousands of
-        // junk one-character symbols from a single line. `git ls-files` is the primary enumeration
-        // path and doesn't honour `RepoScanner.excludedDirs`, so screen them by name here; a
-        // general file-size cap is still TODO.
+        // junk one-character symbols from a single line. Screen them by name here so the read is
+        // skipped entirely; `SymbolParser.maxParseFileSizeBytes` and `isMinified` are the broader
+        // size/shape guards for files this name check misses.
         let fileName = url.lastPathComponent.lowercased()
         guard !fileName.hasSuffix(".min.js"), !fileName.hasSuffix(".bundle.js") else { return nil }
 

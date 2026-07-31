@@ -17,6 +17,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var eventTap: EventTap?
     var symbolIndex: SymbolIndex?
     private var statusItem: StatusItemController?
+    /// Watches the active repo and drives incremental reindex-on-save. Re-pointed whenever the
+    /// active repo changes (there is exactly one active repo, so one watcher at a time).
+    private var repoWatcher: RepoWatcher?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory) // No dock icon
@@ -57,10 +60,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // the background (non-blocking). A dead/non-git path is forgotten via `onRepoInvalid`.
         if let active = RepoPreference.loadActive() {
             index.activateRepo(active)
+            retargetWatcher(to: active)
         }
     }
 
     // MARK: - Repo commands
+
+    /// Point the file watcher at `root` (stopping any previous one) so saves there trigger an
+    /// incremental reindex. Called after every `activateRepo`. Not started under the XCTest host —
+    /// the early return in `applicationDidFinishLaunching` keeps `chooseRepo`/`switchTo` and the
+    /// restore path from running in tests.
+    private func retargetWatcher(to root: URL) {
+        repoWatcher?.stop()
+        guard let index = symbolIndex else { repoWatcher = nil; return }
+        let watcher = RepoWatcher(root: root) { change in
+            // RepoWatcher delivers on the main queue; SymbolIndex is @MainActor.
+            MainActor.assumeIsolated {
+                switch change {
+                case .files(let urls): index.filesChanged(urls)
+                case .rescan:          index.rescanRequested()
+                }
+            }
+        }
+        repoWatcher = watcher
+        watcher.start()
+    }
 
     /// Present a directory picker; on selection, make it active and index it (from cache if present).
     private func chooseRepo() {
@@ -77,6 +101,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         RepoPreference.setActive(url)
         symbolIndex?.activateRepo(url)
+        retargetWatcher(to: url)
     }
 
     /// Rescan the active repo from scratch (bypassing the cache).
@@ -89,6 +114,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func switchTo(_ url: URL) {
         RepoPreference.setActive(url)
         symbolIndex?.activateRepo(url)
+        retargetWatcher(to: url)
     }
 
     private func requestPermissions() {

@@ -80,4 +80,74 @@ enum Indexer {
     static func loadCache(root: URL, cacheBase: URL? = IndexCache.baseDirectory()) async -> [Symbol]? {
         IndexCache.load(for: root, base: cacheBase)
     }
+
+    /// Incremental reindex: re-parse only the `changed` files (repo-relative paths) and splice the
+    /// result into `existing`, WITHOUT a whole-repo rescan. Returns the new full symbol array (also
+    /// persisted to the cache). Runs off the main actor like `buildIndex`.
+    ///
+    /// A changed file is re-included only if it would survive a full scan — it still exists, isn't a
+    /// symlink, isn't in an excluded dir, and isn't gitignored (`RepoScanner.ignored`) — so a
+    /// created file is added, a modified file is refreshed, and a deleted/renamed-away/now-ignored
+    /// file is dropped. `.directory` entries are recomputed from the resulting file set rather than
+    /// patched, and the whole result is re-ordered (code symbols before file/dir entries) and
+    /// de-duplicated exactly as `buildIndex` does, so ranking stays identical to a full scan.
+    static func reindexFiles(
+        _ changed: Set<String>,
+        root: URL,
+        existing: [Symbol],
+        cacheBase: URL? = IndexCache.baseDirectory()
+    ) async -> [Symbol] {
+        guard !changed.isEmpty else { return existing }
+        let scanner = RepoScanner(root: root)
+        let ignored = await scanner.ignored(Array(changed))
+        let fm = FileManager.default
+
+        // Drop every symbol belonging to a changed file — this clears its old code symbols AND its
+        // old `.file` entry in one pass. `.directory` entries key on dir paths, not file paths, and
+        // are rebuilt wholesale below.
+        var kept = existing.filter { !changed.contains($0.filePath) }
+
+        // Re-add the surviving members of the changed set.
+        for rel in changed {
+            let url = root.appendingPathComponent(rel)
+            let isSymlink = (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true
+            guard fm.fileExists(atPath: url.path),
+                  !isSymlink,
+                  !RepoScanner.isExcluded(rel),
+                  !ignored.contains(rel) else { continue }   // deleted / symlink / excluded / gitignored
+
+            // Every repo file gets a searchable `.file` entry, even oversized/unparseable ones.
+            let name = (rel as NSString).lastPathComponent
+            kept.append(Symbol(name: name, kind: .file, filePath: rel, line: 0))
+
+            if let lang = Language.detect(from: url) {
+                let codeSymbols = (try? SymbolParser.parse(url: url, language: lang, relativePath: rel)) ?? []
+                kept.append(contentsOf: codeSymbols)
+            }
+        }
+
+        // Re-establish the full-scan invariant: code symbols first, then `.file`, then `.directory`
+        // (so an exact-name symbol match ranks ahead of a same-named file/dir). `.directory` entries
+        // are derived fresh from the current file set so removed files don't leave orphan dirs.
+        let codeSymbols = kept.filter { $0.kind != .file && $0.kind != .directory }
+        let fileEntries = kept.filter { $0.kind == .file }
+        let filePaths = fileEntries.map(\.filePath)
+
+        var rebuilt = codeSymbols
+        rebuilt.append(contentsOf: fileEntries)
+        for dir in RepoScanner.directories(for: filePaths) {
+            let name = (dir as NSString).lastPathComponent
+            rebuilt.append(Symbol(name: name, kind: .directory, filePath: dir, line: 0))
+        }
+
+        // Dedup on the same string key as `buildIndex` — `Symbol` hashes its fresh-per-init `id`,
+        // so a `Set<Symbol>` would never collapse same-name/path/line duplicates.
+        var seen = Set<String>()
+        let deduped = rebuilt.filter { sym in
+            seen.insert("\(sym.name)|\(sym.filePath)|\(sym.line)").inserted
+        }
+
+        IndexCache.save(deduped, for: root, base: cacheBase)
+        return deduped
+    }
 }
