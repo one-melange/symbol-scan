@@ -196,8 +196,8 @@ class SymbolIndex: ObservableObject {
 
     // MARK: - Search
 
-    /// Strict-substring symbol search — returns the top 10 results ranked by score.
-    /// Ranking/matching lives in `SymbolMatcher` so it can be unit-tested in isolation.
+    /// Strict-substring symbol search — returns the top `SymbolMatcher.defaultResultLimit` results
+    /// ranked by score. Ranking/matching lives in `SymbolMatcher` so it can be unit-tested in isolation.
     func search(_ query: String) -> [Symbol] {
         let results = SymbolMatcher.search(query, in: symbols)
         #if DEBUG
@@ -229,9 +229,13 @@ class SymbolIndex: ObservableObject {
 /// the query "set").
 enum SymbolMatcher {
 
+    /// How many results the picker shows by default. Small on purpose: the overlay lists a short,
+    /// scannable set rather than every match, and strict-substring ranking puts the best ones first.
+    static let defaultResultLimit = 10
+
     /// Returns the best `limit` symbols for `query`, ranked by `score` descending.
     /// An empty query returns the first `limit` symbols unranked.
-    static func search(_ query: String, in symbols: [Symbol], limit: Int = 10) -> [Symbol] {
+    static func search(_ query: String, in symbols: [Symbol], limit: Int = defaultResultLimit) -> [Symbol] {
         guard !query.isEmpty else {
             return Array(symbols.prefix(limit))
         }

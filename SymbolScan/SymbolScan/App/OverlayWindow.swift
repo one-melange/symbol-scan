@@ -51,6 +51,11 @@ class OverlayWindow: NSWindow {
 // MARK: - Window Controller
 
 class OverlayWindowController: NSWindowController {
+    /// Time to let the previously-focused app regain key after `app.activate()` before we post
+    /// synthetic keystrokes into it. Empirically enough for the frontmost-app handoff to settle;
+    /// because we wait it out here, the subsequent `TextInjector.inject` is called with `after: 0`.
+    private static let focusHandbackDelay: TimeInterval = 0.12
+
     private let index: SymbolIndex
     private var hostingView: NSHostingView<SymbolPickerView>?
 
@@ -160,7 +165,7 @@ class OverlayWindowController: NSWindowController {
             if let app = previousApp, !app.isTerminated {
                 app.activate()
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.focusHandbackDelay) {
                 TextInjector.inject(text, after: 0)
             }
         } else if !inject, let text {
