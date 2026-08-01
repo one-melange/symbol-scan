@@ -39,6 +39,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var eventTap: EventTap?
     var symbolIndex: SymbolIndex?
     private var statusItem: StatusItemController?
+    /// The trigger-rebinding window, created lazily on first open and retained across closes.
+    private var preferencesWindowController: PreferencesWindowController?
     /// Watches the active repo and drives incremental reindex-on-save. Re-pointed whenever the
     /// active repo changes (there is exactly one active repo, so one watcher at a time).
     private var repoWatcher: RepoWatcher?
@@ -69,12 +71,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             index: index,
             onChooseRepo: { [weak self] in self?.chooseRepo() },
             onReindex: { [weak self] in self?.reindex() },
-            onSwitch: { [weak self] url in self?.switchTo(url) }
+            onSwitch: { [weak self] url in self?.switchTo(url) },
+            onOpenHotkeys: { [weak self] in self?.openHotkeys() }
         )
 
-        eventTap = EventTap { [weak self] trigger in
+        eventTap = EventTap { [weak self] match in
             guard let self else { return }
-            self.overlayWindowController?.show(trigger: trigger)
+            self.overlayWindowController?.show(match: match)
         }
         eventTap?.start()
 
@@ -139,6 +142,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         retargetWatcher(to: url)
     }
 
+    /// Open (or re-focus) the trigger-rebinding window. Edits persist via `HotkeyPreference` and
+    /// live-reload into the running tap; while the recorder captures, the tap is suspended so a
+    /// still-bound combo doesn't pop the overlay.
+    private func openHotkeys() {
+        if preferencesWindowController == nil {
+            preferencesWindowController = PreferencesWindowController(
+                onChange: { [weak self] bindings in
+                    HotkeyPreference.save(bindings)
+                    self?.eventTap?.updateBindings(bindings)
+                },
+                onRecording: { [weak self] suspended in
+                    self?.eventTap?.recordingSuspended = suspended
+                }
+            )
+        }
+        preferencesWindowController?.show()
+    }
+
     private func requestPermissions() {
         // Accessibility — required for CGEventTap
         let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeRetainedValue(): true]
@@ -167,17 +188,20 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let onChooseRepo: () -> Void
     private let onReindex: () -> Void
     private let onSwitch: (URL) -> Void
+    private let onOpenHotkeys: () -> Void
     private let statusItem: NSStatusItem
     private var cancellables = Set<AnyCancellable>()
 
     init(index: SymbolIndex,
          onChooseRepo: @escaping () -> Void,
          onReindex: @escaping () -> Void,
-         onSwitch: @escaping (URL) -> Void) {
+         onSwitch: @escaping (URL) -> Void,
+         onOpenHotkeys: @escaping () -> Void) {
         self.index = index
         self.onChooseRepo = onChooseRepo
         self.onReindex = onReindex
         self.onSwitch = onSwitch
+        self.onOpenHotkeys = onOpenHotkeys
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
@@ -249,6 +273,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         reindex.isEnabled = index.indexedRepoRoot != nil && !index.isIndexing
         menu.addItem(reindex)
 
+        menu.addItem(.separator())
+        let hotkeys = NSMenuItem(title: "Hotkeys…", action: #selector(openHotkeys), keyEquivalent: "")
+        hotkeys.target = self
+        menu.addItem(hotkeys)
+
         // Recent repos (excluding the active one) for quick switching.
         let recents = RepoPreference.loadRecents().filter { $0.path != index.indexedRepoRoot?.path }
         if !recents.isEmpty {
@@ -272,6 +301,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     @objc private func chooseRepo() { onChooseRepo() }
     @objc private func reindexRepo() { onReindex() }
+    @objc private func openHotkeys() { onOpenHotkeys() }
     @objc private func switchRepo(_ sender: NSMenuItem) {
         guard let url = sender.representedObject as? URL else { return }
         onSwitch(url)
@@ -289,5 +319,41 @@ enum StatusMenuModel {
         if isIndexing { return "Indexing \(name)…" }
         if let error { return "\(name): \(error)" }
         return "\(name) — \(count) symbols"
+    }
+}
+
+// MARK: - Preferences window
+
+/// Hosts the SwiftUI `HotkeySettingsView` in a hand-managed window. Like everything else in this
+/// `.accessory` app, the window is managed manually (no SwiftUI `Settings` scene, which is awkward
+/// to open programmatically from a menu-bar-only app) and reuses the overlay's activation dance so
+/// it can take key focus — the key recorder receives no `keyDown` otherwise. Lives here so it builds
+/// without a project-file edit.
+@MainActor
+final class PreferencesWindowController: NSWindowController {
+    init(onChange: @escaping (HotkeyBindings) -> Void,
+         onRecording: @escaping (Bool) -> Void) {
+        let root = HotkeySettingsView(onChange: onChange, onRecording: onRecording)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 380, height: 220),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "SymbolScan Hotkeys"
+        window.isReleasedWhenClosed = false   // we retain + reuse this controller
+        window.contentView = NSHostingView(rootView: root)
+        window.center()
+        super.init(window: window)
+    }
+
+    required init?(coder: NSCoder) { fatalError("not implemented") }
+
+    /// Bring the window forward. An `.accessory` app isn't active by default, so activate or the
+    /// window opens behind other apps and can't become key (same handling as the overlay).
+    func show() {
+        showWindow(nil)
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 }

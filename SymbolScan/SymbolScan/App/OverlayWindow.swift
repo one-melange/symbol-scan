@@ -64,9 +64,9 @@ class OverlayWindowController: NSWindowController {
     private var previousApp: NSRunningApplication?
     /// The view model backing the currently-shown picker (nil while hidden).
     private var viewModel: SymbolPickerViewModel?
-    /// The trigger that opened the current picker — determines the injected prefix (see
-    /// `injectionPrefix`).
-    private var currentTrigger: EventTap.Trigger?
+    /// The resolved trigger that opened the current picker — its action + whether the marker was
+    /// already typed determine the injected prefix (see `InjectionComposer`).
+    private var currentMatch: HotkeyMatch?
 
     /// Invoked when the user asks to choose a different repo (⌘O or the in-picker action).
     var onChooseRepo: (() -> Void)?
@@ -91,7 +91,7 @@ class OverlayWindowController: NSWindowController {
 
     required init?(coder: NSCoder) { fatalError("not implemented") }
 
-    func show(trigger: EventTap.Trigger) {
+    func show(match: HotkeyMatch) {
         guard let screen = NSScreen.main else { return }
 
         // Capture the app that had focus when the trigger fired — must happen before
@@ -111,9 +111,9 @@ class OverlayWindowController: NSWindowController {
 
         let vm = SymbolPickerViewModel(index: index)
         self.viewModel = vm
-        self.currentTrigger = trigger
+        self.currentMatch = match
 
-        let pickerView = SymbolPickerView(viewModel: vm, trigger: trigger) { [weak self] action in
+        let pickerView = SymbolPickerView(viewModel: vm, action: match.action) { [weak self] action in
             switch action {
             case .inject:     self?.confirmAndHide(inject: true)
             case .copy:       self?.confirmAndHide(inject: false)
@@ -157,7 +157,11 @@ class OverlayWindowController: NSWindowController {
         // (composition kept pure in `InjectionComposer` so it's unit-testable).
         let text = dismissOnly
             ? nil
-            : viewModel?.selectedInjectionText().map { InjectionComposer.compose(trigger: currentTrigger, body: $0) }
+            : viewModel?.selectedInjectionText().map {
+                InjectionComposer.compose(action: currentMatch?.action,
+                                          markerAlreadyTyped: currentMatch?.passThrough ?? false,
+                                          body: $0)
+            }
 
         if inject, let text {
             hide()
@@ -184,20 +188,19 @@ class OverlayWindowController: NSWindowController {
 /// Pure composition of the text injected/copied when a picker row is chosen, split out (like
 /// `OverlayPlacement` / `StatusMenuModel`) so it's unit-testable without AppKit.
 ///
-/// `Symbol.injectionText` supplies the reference *body*; the leading marker comes from the trigger:
-/// the `@`/`#` triggers pass their keystroke through to the target app (see `EventTap`), so the
-/// marker is already in the buffer and we add nothing — otherwise it doubles (`@@…`). The `⌘⇧O`
-/// trigger types nothing, so we supply a leading `@` to match the same reference shape.
+/// `Symbol.injectionText` supplies the reference *body*; the leading marker comes from the action.
+/// When the bound keystroke already typed the marker into the target app (`markerAlreadyTyped` —
+/// the matcher's pass-through bit, true for the default `@`/`#` combos), we add nothing, or it
+/// doubles (`@@…`). Otherwise — the ⌘⇧O open-symbol trigger, or any action rebound to a combo that
+/// types nothing — we prepend the action's marker so the reference has the same shape.
 enum InjectionComposer {
-    static func prefix(for trigger: EventTap.Trigger?) -> String {
-        switch trigger {
-        case .at, .hash: return ""     // already typed into the target app
-        default:         return "@"    // ⌘⇧O (or none) — nothing was typed
-        }
+    static func prefix(action: TriggerAction?, markerAlreadyTyped: Bool) -> String {
+        guard !markerAlreadyTyped else { return "" }   // already typed into the target app
+        return action?.marker ?? "@"                   // nothing typed — supply the marker (default "@")
     }
 
-    static func compose(trigger: EventTap.Trigger?, body: String) -> String {
-        prefix(for: trigger) + body
+    static func compose(action: TriggerAction?, markerAlreadyTyped: Bool, body: String) -> String {
+        prefix(action: action, markerAlreadyTyped: markerAlreadyTyped) + body
     }
 }
 
