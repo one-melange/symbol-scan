@@ -1,6 +1,28 @@
 import AppKit
 import SwiftUI
 import Combine
+import os
+
+// MARK: - Logging
+
+/// Central `os.Logger` namespace. Lives here (rather than its own file) so it builds without a
+/// project-file edit — same rationale as `StatusItemController` below and `SymbolMatcher`/
+/// `RepoPreference` elsewhere. In one module these categories are visible to every subsystem.
+///
+/// Replaced the app's `print()` debug logging (T10). Two rules for call sites: never log raw
+/// keystrokes (the old per-event keycode `print` was a privacy leak and was deleted, not migrated),
+/// and interpolate user content — the search query, a repo path — with `privacy: .private` so it's
+/// redacted in captured logs.
+enum Log {
+    private static let subsystem = Bundle.main.bundleIdentifier ?? "SymbolScan"
+    static let app     = Logger(subsystem: subsystem, category: "app")
+    static let input   = Logger(subsystem: subsystem, category: "input")
+    static let index   = Logger(subsystem: subsystem, category: "index")
+    static let search  = Logger(subsystem: subsystem, category: "search")
+    static let scanner = Logger(subsystem: subsystem, category: "scanner")
+    static let parser  = Logger(subsystem: subsystem, category: "parser")
+    static let notify  = Logger(subsystem: subsystem, category: "notifications")
+}
 
 @main
 struct OverlayApp: App {
@@ -122,7 +144,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeRetainedValue(): true]
         let trusted = AXIsProcessTrustedWithOptions(options)
         if !trusted {
-            print("⚠️ Accessibility permission not granted. CGEventTap will not work.")
+            Log.app.warning("Accessibility permission not granted. CGEventTap will not work.")
         }
 
         // Screen recording — required for ScreenCaptureKit
@@ -188,8 +210,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             guard let button = self?.statusItem.button,
                   let window = button.window,
                   !window.occlusionState.contains(.visible) else { return }
-            print("""
-            ⚠️ SymbolScan's menu-bar icon is hidden (menu bar full / notch). \
+            Log.app.warning("""
+            SymbolScan's menu-bar icon is hidden (menu bar full / notch). \
             Use the picker overlay instead: ⌘O choose repo, ⌘R reindex, ⌘Q quit.
             """)
         }

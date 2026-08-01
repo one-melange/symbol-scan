@@ -7,6 +7,7 @@ import TreeSitterTSX
 import TreeSitterJavaScript
 import TreeSitterRust
 import TreeSitterGo
+import os
 
 /// Tree-sitter–based symbol extractor — the only extractor now that the regex fallback has been
 /// removed. Symbols come from a real parse tree, so method-vs-function is decided by node
@@ -317,7 +318,6 @@ enum SymbolParser {
         reportLock.lock()
         defer { reportLock.unlock() }
         guard reportedFailures.insert(language).inserted else { return }
-        print("⚠️ Tree-sitter grammar/query failed to build for \(language.rawValue) — "
-              + "no symbols will be indexed for those files")
+        Log.parser.error("Tree-sitter grammar/query failed to build for \(language.rawValue, privacy: .public) — no symbols will be indexed for those files")
     }
 }

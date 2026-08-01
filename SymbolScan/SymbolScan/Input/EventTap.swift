@@ -1,5 +1,6 @@
 import AppKit
 import Carbon
+import os
 
 class EventTap {
     enum Trigger {
@@ -42,7 +43,7 @@ class EventTap {
             },
             userInfo: selfPtr
         ) else {
-            print("⚠️ Failed to create CGEventTap. Check Accessibility permissions.")
+            Log.input.error("Failed to create CGEventTap. Check Accessibility permissions.")
             return
         }
 
@@ -58,7 +59,6 @@ class EventTap {
     }
 
     private func handle(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
-        print("⌨️ key event received: \(event.getIntegerValueField(.keyboardEventKeycode))")
         guard type == .keyDown else { return Unmanaged.passRetained(event) }
 
         let flags = event.flags

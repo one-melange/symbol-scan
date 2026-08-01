@@ -1,5 +1,6 @@
 import Foundation
 import CoreServices
+import os
 
 class RepoScanner {
 
@@ -22,11 +23,11 @@ class RepoScanner {
     /// Falls back to FileManager walk if git isn't available.
     func enumerateSourceFiles() async throws -> [URL] {
         if isGitRepo, let files = try? await gitLsFiles() {
-            print("📂 enumerateSourceFiles: git ls-files → \(files.count) source files")
+            Log.scanner.debug("enumerateSourceFiles: git ls-files → \(files.count) source files")
             return files
         }
         let files = fileManagerWalk()
-        print("📂 enumerateSourceFiles: FileManager fallback → \(files.count) source files")
+        Log.scanner.debug("enumerateSourceFiles: FileManager fallback → \(files.count) source files")
         return files
     }
 
@@ -35,11 +36,11 @@ class RepoScanner {
     /// Same enumeration as `enumerateSourceFiles`, minus the language filter.
     func enumerateAllFiles() async throws -> [String] {
         if isGitRepo, let paths = try? await gitLsFilesRaw() {
-            print("📂 enumerateAllFiles: git ls-files → \(paths.count) files")
+            Log.scanner.debug("enumerateAllFiles: git ls-files → \(paths.count) files")
             return paths
         }
         let paths = fileManagerWalkRaw()
-        print("📂 enumerateAllFiles: FileManager fallback → \(paths.count) files")
+        Log.scanner.debug("enumerateAllFiles: FileManager fallback → \(paths.count) files")
         return paths
     }
 
@@ -96,7 +97,8 @@ class RepoScanner {
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice // discard stderr (an unread pipe can also deadlock)
 
-        print("🔍 Running git ls-files in: \(root.path)")
+        // Repo path is user-identifying — keep it `.private` so it's redacted in captured logs.
+        Log.scanner.debug("Running git ls-files in: \(self.root.path, privacy: .private)")
         try process.run()
 
         // Drain stdout to EOF *before* waiting. git's output on a large repo (tens of thousands of

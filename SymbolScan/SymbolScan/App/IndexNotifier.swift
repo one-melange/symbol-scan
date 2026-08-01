@@ -1,5 +1,6 @@
 import Foundation
 import UserNotifications
+import os
 
 /// Posts a local notification banner when a real index scan finishes, so the user knows a
 /// long-running background index (e.g. a large repo) completed without watching the menu bar.
@@ -13,7 +14,7 @@ enum IndexNotifier {
     static func requestAuthorization() {
         guard let center = center else { return }
         center.requestAuthorization(options: [.alert, .sound]) { _, error in
-            if let error { print("⚠️ Notification authorization failed: \(error)") }
+            if let error { Log.notify.error("Notification authorization failed: \(error.localizedDescription, privacy: .public)") }
         }
     }
 
@@ -29,7 +30,7 @@ enum IndexNotifier {
             trigger: nil   // deliver immediately
         )
         center.add(request) { error in
-            if let error { print("⚠️ Failed to post index notification: \(error)") }
+            if let error { Log.notify.error("Failed to post index notification: \(error.localizedDescription, privacy: .public)") }
         }
     }
 

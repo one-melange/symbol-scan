@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import CryptoKit
+import os
 
 @MainActor
 class SymbolIndex: ObservableObject {
@@ -69,7 +70,7 @@ class SymbolIndex: ObservableObject {
             symbolCount = cached.count
             isIndexing = false
             publishEpoch += 1
-            print("💾 Loaded \(cached.count) cached symbols for \(root.lastPathComponent)")
+            Log.index.info("Loaded \(cached.count) cached symbols for \(root.lastPathComponent, privacy: .public)")
         } else {
             startJob(root: root, force: false)
         }
@@ -127,7 +128,7 @@ class SymbolIndex: ObservableObject {
                 lastIndexError = nil
                 publishEpoch += 1
             }
-            print("✅ Indexed \(result.symbols.count) symbols across \(result.fileCount) files in \(root.lastPathComponent)")
+            Log.index.info("Indexed \(result.symbols.count) symbols across \(result.fileCount) files in \(root.lastPathComponent, privacy: .public)")
             IndexNotifier.notifyIndexed(root: root, count: result.symbols.count)
         case .failure(let error):
             if error is CancellationError { return }   // replaced by a forced re-index
@@ -136,7 +137,7 @@ class SymbolIndex: ObservableObject {
                 isIndexing = false
                 lastIndexError = error.localizedDescription
             }
-            print("❌ Indexing error for \(root.lastPathComponent): \(error)")
+            Log.index.error("Indexing error for \(root.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
             if error is IndexError { onRepoInvalid?(root) }
         }
     }
@@ -201,7 +202,8 @@ class SymbolIndex: ObservableObject {
     func search(_ query: String) -> [Symbol] {
         let results = SymbolMatcher.search(query, in: symbols)
         #if DEBUG
-        print("🔎 search(\"\(query)\") → \(results.count): \(results.map(\.name))")
+        // Query text is the user's typing — keep it `.private` so it's redacted in captured logs.
+        Log.search.debug("search(\(query, privacy: .private)) → \(results.count) results")
         #endif
         return results
     }
@@ -343,7 +345,7 @@ enum IndexCache {
             try data.write(to: url, options: .atomic)
             return true
         } catch {
-            print("⚠️ Failed to write index cache: \(error)")
+            Log.index.error("Failed to write index cache: \(error.localizedDescription, privacy: .public)")
             return false
         }
     }
