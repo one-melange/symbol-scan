@@ -23,6 +23,20 @@ class SymbolIndex: ObservableObject {
     /// so the app can forget a dead/renamed repo preference.
     var onRepoInvalid: ((URL) -> Void)?
 
+    /// Repo-relative paths reported changed by the file watcher, awaiting an incremental reindex.
+    /// Accumulated between drains so a burst of saves coalesces into one splice.
+    private var pendingChanges: Set<String> = []
+
+    /// Single-flight guard: only one incremental splice runs at a time, so the read-modify-write of
+    /// `symbols` (snapshot → off-main reparse → write-back) can't interleave with another.
+    private var incrementalRunning = false
+
+    /// Bumped on every *external* replacement of `symbols` (activation, cache load, full-scan
+    /// finish). An incremental captures the epoch when it snapshots and only writes back if it's
+    /// unchanged — otherwise a full scan that both started *and* finished during the off-main
+    /// reparse (so `jobs[root]` is already nil again) would be silently clobbered by stale data.
+    private var publishEpoch = 0
+
     // MARK: - Activation
 
     /// Make `root` the active repo (what the picker searches). Non-blocking: loads the on-disk
@@ -34,6 +48,8 @@ class SymbolIndex: ObservableObject {
         lastIndexError = nil
         symbols = []
         symbolCount = 0
+        pendingChanges = []   // drop any changes queued for the previously-active repo
+        publishEpoch += 1     // invalidate any in-flight incremental from the previous view
         isIndexing = jobs[root] != nil   // reflect an already-running background job for this repo
 
         // Load the on-disk cache OFF the main thread (a big cache's JSON decode can itself block),
@@ -52,6 +68,7 @@ class SymbolIndex: ObservableObject {
             symbols = cached
             symbolCount = cached.count
             isIndexing = false
+            publishEpoch += 1
             print("💾 Loaded \(cached.count) cached symbols for \(root.lastPathComponent)")
         } else {
             startJob(root: root, force: false)
@@ -108,6 +125,7 @@ class SymbolIndex: ObservableObject {
                 symbolCount = result.symbols.count
                 isIndexing = false
                 lastIndexError = nil
+                publishEpoch += 1
             }
             print("✅ Indexed \(result.symbols.count) symbols across \(result.fileCount) files in \(root.lastPathComponent)")
             IndexNotifier.notifyIndexed(root: root, count: result.symbols.count)
@@ -121,6 +139,59 @@ class SymbolIndex: ObservableObject {
             print("❌ Indexing error for \(root.lastPathComponent): \(error)")
             if error is IndexError { onRepoInvalid?(root) }
         }
+    }
+
+    // MARK: - Incremental reindex (file watcher)
+
+    /// The file watcher observed `paths` change in the active repo. Queue them and drain — a
+    /// targeted reparse of just those files, no whole-repo rescan. Paths for a repo that is no
+    /// longer active are ignored (the `indexedRepoRoot` guards).
+    func filesChanged(_ paths: [URL]) {
+        guard let root = indexedRepoRoot else { return }
+        let scanner = RepoScanner(root: root)
+        for url in paths { pendingChanges.insert(scanner.relativePath(for: url)) }
+        drainIncremental(root: root)
+    }
+
+    /// The file watcher lost events (dropped/coalesced, or the repo root moved) — a targeted update
+    /// can't be trusted, so fall back to an authoritative full rescan.
+    func rescanRequested() {
+        guard let root = indexedRepoRoot else { return }
+        reindex(root)
+    }
+
+    /// Splice the currently-pending file changes into `symbols` off the main actor, if it's safe:
+    /// the repo is still active, no full scan is running (a full scan is authoritative and will
+    /// supersede us), and no other incremental is in flight (single-flight).
+    private func drainIncremental(root: URL) {
+        guard root == indexedRepoRoot,
+              jobs[root] == nil,
+              !incrementalRunning,
+              !pendingChanges.isEmpty else { return }
+
+        let batch = pendingChanges
+        pendingChanges = []
+        incrementalRunning = true
+        let snapshot = symbols          // snapshot on the main actor before detaching
+        let epoch = publishEpoch        // …and the epoch it belongs to
+
+        Task.detached(priority: .utility) { [weak self] in
+            let updated = await Indexer.reindexFiles(batch, root: root, existing: snapshot)
+            await self?.finishIncremental(root: root, updated: updated, epoch: epoch)
+        }
+    }
+
+    /// Main-actor completion for an incremental splice. Publishes silently — no `IndexNotifier`
+    /// banner, unlike a full scan — then re-drains to pick up anything that changed mid-splice.
+    private func finishIncremental(root: URL, updated: [Symbol], epoch: Int) {
+        incrementalRunning = false
+        // Discard if the repo switched away, a full (re)index is running or has published since we
+        // snapshotted (epoch bumped), leaving that authoritative result in place.
+        if root == indexedRepoRoot, jobs[root] == nil, epoch == publishEpoch {
+            symbols = updated
+            symbolCount = updated.count
+        }
+        drainIncremental(root: root)
     }
 
     // MARK: - Search
@@ -209,8 +280,11 @@ enum IndexCache {
     /// forces a rescan. v2: added `.file`/`.directory` entries. v3: symbols now come from
     /// Tree-sitter, so regex-built caches must be discarded. v4: `.tsx` is parsed with the
     /// TSX grammar and `.js`/`.jsx` are indexed — caches built before that are missing
-    /// those symbols entirely, and would otherwise be served forever.
-    static let version = 4
+    /// those symbols entirely, and would otherwise be served forever. v5: the git enumeration
+    /// path now excludes `target`/`vendor`/`__pycache__`/`.next`/`dist`, caps parse file size,
+    /// and skips symlinked dirs — pre-v5 caches can contain now-excluded entries (and the
+    /// incremental writer must never patch a stale v4 array into an inconsistent mix).
+    static let version = 5
 
     private struct Payload: Codable {
         var version: Int
