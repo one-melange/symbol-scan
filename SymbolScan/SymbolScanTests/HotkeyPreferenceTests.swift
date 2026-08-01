@@ -3,7 +3,7 @@ import Foundation
 import Carbon
 @testable import SymbolScan
 
-/// Persistence + display formatting for the configurable hotkeys (T6). Mirrors `RepoPreferenceTests`:
+/// Persistence + display formatting for the single configurable hotkey. Mirrors `RepoPreferenceTests`:
 /// a throwaway `UserDefaults` suite and a pure `decode` seam that never touches disk.
 @Suite struct HotkeyPreferenceTests {
 
@@ -13,38 +13,37 @@ import Carbon
 
     // MARK: - decode (pure)
 
-    @Test func decodeNilOrEmptyReturnsDefaults() {
-        #expect(HotkeyPreference.decode(nil) == .defaults)
-        #expect(HotkeyPreference.decode(Data()) == .defaults)
+    @Test func decodeNilOrEmptyReturnsDefault() {
+        #expect(HotkeyPreference.decode(nil) == HotkeyPreference.defaultBinding)
+        #expect(HotkeyPreference.decode(Data()) == HotkeyPreference.defaultBinding)
     }
 
-    @Test func decodeCorruptReturnsDefaults() {
-        #expect(HotkeyPreference.decode(Data("not json".utf8)) == .defaults)
+    @Test func decodeCorruptReturnsDefault() {
+        #expect(HotkeyPreference.decode(Data("not json".utf8)) == HotkeyPreference.defaultBinding)
+    }
+
+    @Test func defaultIsCmdShiftO() {
+        #expect(HotkeyPreference.defaultBinding == HotkeyBinding(keyCode: kVK_ANSI_O, modifiers: [.command, .shift]))
     }
 
     // MARK: - UserDefaults round-trip
 
     @Test func saveThenLoadRoundTrips() {
         let d = makeDefaults()
-        var bindings = HotkeyBindings.defaults
-        bindings.openSymbol = HotkeyBinding(keyCode: kVK_ANSI_K, modifiers: [.command, .shift])
-        HotkeyPreference.save(bindings, in: d)
-
-        #expect(HotkeyPreference.load(from: d) == bindings)
-        #expect(HotkeyPreference.load(from: d).openSymbol.keyCode == kVK_ANSI_K)
+        let binding = HotkeyBinding(keyCode: kVK_ANSI_K, modifiers: [.command, .shift])
+        HotkeyPreference.save(binding, in: d)
+        #expect(HotkeyPreference.load(from: d) == binding)
     }
 
-    @Test func loadWithoutSaveReturnsDefaults() {
-        #expect(HotkeyPreference.load(from: makeDefaults()) == .defaults)
+    @Test func loadWithoutSaveReturnsDefault() {
+        #expect(HotkeyPreference.load(from: makeDefaults()) == HotkeyPreference.defaultBinding)
     }
 
-    @Test func resetRestoresDefaults() {
+    @Test func resetRestoresDefault() {
         let d = makeDefaults()
-        var bindings = HotkeyBindings.defaults
-        bindings.claudeAt = HotkeyBinding(keyCode: kVK_ANSI_J, modifiers: [.control])
-        HotkeyPreference.save(bindings, in: d)
+        HotkeyPreference.save(HotkeyBinding(keyCode: kVK_ANSI_J, modifiers: [.control]), in: d)
         HotkeyPreference.reset(in: d)
-        #expect(HotkeyPreference.load(from: d) == .defaults)
+        #expect(HotkeyPreference.load(from: d) == HotkeyPreference.defaultBinding)
     }
 
     // MARK: - displayString / keyLabel
@@ -55,9 +54,9 @@ import Carbon
         #expect(b.displayString == "⌃⌥⇧⌘O")
     }
 
-    @Test func displayStringForDefaults() {
+    @Test func displayStringForCommonBindings() {
         #expect(HotkeyBinding(keyCode: kVK_ANSI_2, modifiers: [.shift]).displayString == "⇧2")
-        #expect(HotkeyBinding(keyCode: kVK_ANSI_O, modifiers: [.command, .shift]).displayString == "⇧⌘O")
+        #expect(HotkeyPreference.defaultBinding.displayString == "⇧⌘O")
     }
 
     @Test func keyLabelCoversLettersDigitsAndFallsBack() {

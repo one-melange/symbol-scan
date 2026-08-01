@@ -12,7 +12,6 @@ enum PickerAction {
 }
 
 struct SymbolPickerView: View {
-    let action: TriggerAction
     /// Called when the picker resolves (inject / copy / dismiss).
     let onResolve: (PickerAction) -> Void
 
@@ -22,11 +21,9 @@ struct SymbolPickerView: View {
     private let rowHeight: CGFloat = 44
 
     init(viewModel: SymbolPickerViewModel,
-         action: TriggerAction,
          onResolve: @escaping (PickerAction) -> Void) {
         _vm = StateObject(wrappedValue: viewModel)
         _index = ObservedObject(wrappedValue: viewModel.index)
-        self.action = action
         self.onResolve = onResolve
     }
 
@@ -50,8 +47,8 @@ struct SymbolPickerView: View {
 
     private var searchBar: some View {
         HStack(spacing: 10) {
-            // Trigger badge — the combo actually bound to this action (reflects user config).
-            Text(HotkeyPreference.load()[action].displayString)
+            // Trigger badge — the combo actually bound to the hotkey (reflects user config).
+            Text(HotkeyPreference.load().displayString)
                 .font(.system(size: 11, weight: .semibold, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 6)
@@ -191,12 +188,32 @@ struct SearchFieldRepresentable: NSViewRepresentable {
         field.delegate = context.coordinator
         field.stringValue = vm.query
 
-        // The borderless window must be key before it can hold first responder; defer a
-        // tick so makeKeyAndOrderFront has run.
-        DispatchQueue.main.async { [weak field] in
-            field?.window?.makeFirstResponder(field)
-        }
+        // The borderless window must be *key* before it can hold first responder. App activation
+        // (in `OverlayWindowController.show`) is async, so the window isn't key on this runloop turn
+        // — poll briefly until it is, then grab focus. Without this the field silently fails to
+        // become first responder over apps that are slow to yield (notably terminals like iTerm),
+        // leaving the search bar un-typeable until the user clicks it.
+        Self.grabFocus(field, attempts: 25)
         return field
+    }
+
+    /// Make `field` first responder as soon as its window becomes key, retrying briefly. Each turn
+    /// nudges the window toward key so activation that's still settling completes.
+    private static func grabFocus(_ field: NSTextField?, attempts: Int) {
+        guard let field else { return }
+        guard let window = field.window else {
+            // Not in the view hierarchy yet — try again shortly.
+            if attempts > 0 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { grabFocus(field, attempts: attempts - 1) }
+            }
+            return
+        }
+        if window.isKeyWindow {
+            window.makeFirstResponder(field)
+        } else if attempts > 0 {
+            window.makeKey()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { grabFocus(field, attempts: attempts - 1) }
+        }
     }
 
     func updateNSView(_ nsView: NSTextField, context: Context) {
@@ -342,59 +359,70 @@ enum PickerEmptyState {
 // MARK: - Hotkey settings (T6)
 
 /// The trigger-rebinding pane, hosted by `PreferencesWindowController` (in AppDelegate.swift). Holds
-/// the working `HotkeyBindings` in `@State`; `onChange` persists + live-reloads them, `onRecording`
-/// suspends the global tap while a combo is being captured. Lives here (with `KeyRecorderView`)
-/// rather than its own file so it builds without a project-file edit.
+/// the working `HotkeyBinding` in `@State`; `onChange` persists + live-reloads it, `onRecording`
+/// suspends the global tap while a combo is being captured. There is a single configurable hotkey.
+/// Lives here (with `KeyRecorderView`) rather than its own file so it builds without a project-file
+/// edit.
 struct HotkeySettingsView: View {
-    @State private var bindings: HotkeyBindings
-    private let onChange: (HotkeyBindings) -> Void
+    @State private var binding: HotkeyBinding
+    /// Shows a persistent "Saved" confirmation after a capture, so it's unambiguous the change stuck
+    /// (recording alone only proves the combo was *read*). Cleared when a new recording starts.
+    @State private var justSaved = false
+    private let onChange: (HotkeyBinding) -> Void
     private let onRecording: (Bool) -> Void
 
-    /// `label` is the action's human name shown beside its recorder.
-    private static let rows: [(action: TriggerAction, label: String)] = [
-        (.claudeAt,   "Claude Code  @"),
-        (.codexHash,  "Codex  #"),
-        (.openSymbol, "Open Symbol"),
-    ]
-
-    init(bindings: HotkeyBindings = HotkeyPreference.load(),
-         onChange: @escaping (HotkeyBindings) -> Void,
+    init(binding: HotkeyBinding = HotkeyPreference.load(),
+         onChange: @escaping (HotkeyBinding) -> Void,
          onRecording: @escaping (Bool) -> Void) {
-        _bindings = State(initialValue: bindings)
+        _binding = State(initialValue: binding)
         self.onChange = onChange
         self.onRecording = onRecording
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Trigger Hotkeys").font(.headline)
-            Text("Click a shortcut, then press a new key combination. A modifier is required; Esc cancels.")
+            Text("Trigger Hotkey").font(.headline)
+            Text("Click the shortcut, then press a new key combination. A modifier is required; Esc cancels.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            ForEach(Self.rows, id: \.action) { row in
-                HStack {
-                    Text(row.label)
-                        .font(.system(size: 13, design: .monospaced))
-                        .frame(width: 150, alignment: .leading)
-                    Spacer()
-                    KeyRecorderView(
-                        binding: bindings[row.action],
-                        onCapture: { newBinding in
-                            bindings[row.action] = newBinding
-                            onChange(bindings)
-                        },
-                        onRecording: onRecording
-                    )
-                    .frame(width: 130, height: 26)
-                }
+            HStack {
+                Text("Open the picker")
+                    .font(.system(size: 13))
+                Spacer()
+                KeyRecorderView(
+                    binding: binding,
+                    onCapture: { newBinding in
+                        binding = newBinding
+                        onChange(newBinding)
+                        justSaved = true
+                    },
+                    onRecording: { recording in
+                        if recording { justSaved = false }   // clear a stale confirmation mid-capture
+                        onRecording(recording)
+                    }
+                )
+                .frame(width: 130, height: 26)
             }
 
+            // Saved confirmation. Reserve the row height either way so the layout doesn't jump.
+            Group {
+                if justSaved {
+                    Label("Saved — \(binding.displayString) is now your hotkey", systemImage: "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                } else {
+                    Text(" ").font(.caption)
+                }
+            }
+            .frame(height: 16, alignment: .leading)
+
             Divider()
-            Button("Restore Defaults") {
-                bindings = .defaults
-                onChange(bindings)
+            Button("Restore Default") {
+                binding = HotkeyPreference.defaultBinding
+                onChange(binding)
+                justSaved = true
             }
         }
         .padding(20)

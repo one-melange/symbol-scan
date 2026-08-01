@@ -2,12 +2,10 @@ import Testing
 import Carbon
 @testable import SymbolScan
 
-/// The data-driven trigger matrix (T6). Covers exact-modifier matching and the pass-through rule
-/// that decides whether the marker is typed into the target app or injected as a prefix — the one
-/// behavior that can corrupt the user's editor buffer if it's wrong.
+/// The single-hotkey matcher. Covers exact-modifier matching and the pass-through rule that decides
+/// whether the marker is typed into the target app or injected as a prefix — the one behavior that
+/// can corrupt the user's editor buffer if it's wrong.
 @Suite struct HotkeyMatcherTests {
-
-    private let defaults = HotkeyBindings.defaults
 
     // MARK: - naturalMarker
 
@@ -21,49 +19,38 @@ import Carbon
         #expect(HotkeyMatcher.naturalMarker(keyCode: kVK_ANSI_2, modifiers: []) == nil)
     }
 
-    // MARK: - Defaults behave exactly as before
+    // MARK: - Default trigger (⌘⇧O) suppresses
 
-    @Test func defaultAtPassesThrough() {
-        let m = HotkeyMatcher.match(keyCode: kVK_ANSI_2, modifiers: [.shift], bindings: defaults)
-        #expect(m == HotkeyMatch(action: .claudeAt, passThrough: true))
+    @Test func defaultBindingMatchesAndSuppresses() {
+        let m = HotkeyMatcher.match(keyCode: kVK_ANSI_O, modifiers: [.command, .shift],
+                                    binding: HotkeyPreference.defaultBinding)
+        #expect(m == HotkeyMatch(passThrough: false))
     }
 
-    @Test func defaultHashPassesThrough() {
-        let m = HotkeyMatcher.match(keyCode: kVK_ANSI_3, modifiers: [.shift], bindings: defaults)
-        #expect(m == HotkeyMatch(action: .codexHash, passThrough: true))
-    }
+    // MARK: - A rebound pass-through trigger (@)
 
-    @Test func defaultOpenSymbolSuppresses() {
-        let m = HotkeyMatcher.match(keyCode: kVK_ANSI_O, modifiers: [.command, .shift], bindings: defaults)
-        #expect(m == HotkeyMatch(action: .openSymbol, passThrough: false))
+    @Test func atBindingPassesThrough() {
+        let at = HotkeyBinding(keyCode: kVK_ANSI_2, modifiers: [.shift])
+        #expect(HotkeyMatcher.match(keyCode: kVK_ANSI_2, modifiers: [.shift], binding: at)
+                == HotkeyMatch(passThrough: true))
     }
 
     // MARK: - Exact-modifier discrimination
 
-    @Test func cmdShiftDigitDoesNotFireBareShiftBinding() {
+    @Test func extraOrMissingModifierDoesNotMatch() {
+        let binding = HotkeyBinding(keyCode: kVK_ANSI_O, modifiers: [.command, .shift])
+        #expect(HotkeyMatcher.match(keyCode: kVK_ANSI_O, modifiers: [.command, .shift, .option], binding: binding) == nil)
+        #expect(HotkeyMatcher.match(keyCode: kVK_ANSI_O, modifiers: [.command], binding: binding) == nil)
+    }
+
+    @Test func differentKeyDoesNotMatch() {
+        let binding = HotkeyBinding(keyCode: kVK_ANSI_O, modifiers: [.command, .shift])
+        #expect(HotkeyMatcher.match(keyCode: kVK_ANSI_P, modifiers: [.command, .shift], binding: binding) == nil)
+    }
+
+    @Test func bareShiftAtDoesNotFireForCmdShift() {
         // ⌘⇧2 must NOT match the bare-⇧ `@` binding (would with a `contains` check).
-        #expect(HotkeyMatcher.match(keyCode: kVK_ANSI_2, modifiers: [.command, .shift], bindings: defaults) == nil)
-    }
-
-    @Test func ctrlDigitDoesNotFireShiftBinding() {
-        #expect(HotkeyMatcher.match(keyCode: kVK_ANSI_2, modifiers: [.control], bindings: defaults) == nil)
-    }
-
-    @Test func unboundComboReturnsNil() {
-        #expect(HotkeyMatcher.match(keyCode: kVK_ANSI_A, modifiers: [.command], bindings: defaults) == nil)
-    }
-
-    // MARK: - Rebinds
-
-    @Test func rebindToNonTypingComboSuppresses() {
-        // Rebind Claude `@` to ⌘⇧A — types no marker, so it must suppress (and the marker gets
-        // injected as a prefix downstream instead).
-        var bindings = defaults
-        bindings.claudeAt = HotkeyBinding(keyCode: kVK_ANSI_A, modifiers: [.command, .shift])
-
-        let m = HotkeyMatcher.match(keyCode: kVK_ANSI_A, modifiers: [.command, .shift], bindings: bindings)
-        #expect(m == HotkeyMatch(action: .claudeAt, passThrough: false))
-        // The old default combo no longer fires that action.
-        #expect(HotkeyMatcher.match(keyCode: kVK_ANSI_2, modifiers: [.shift], bindings: bindings) == nil)
+        let at = HotkeyBinding(keyCode: kVK_ANSI_2, modifiers: [.shift])
+        #expect(HotkeyMatcher.match(keyCode: kVK_ANSI_2, modifiers: [.command, .shift], binding: at) == nil)
     }
 }

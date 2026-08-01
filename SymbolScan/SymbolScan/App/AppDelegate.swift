@@ -148,9 +148,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func openHotkeys() {
         if preferencesWindowController == nil {
             preferencesWindowController = PreferencesWindowController(
-                onChange: { [weak self] bindings in
-                    HotkeyPreference.save(bindings)
-                    self?.eventTap?.updateBindings(bindings)
+                onChange: { [weak self] binding in
+                    HotkeyPreference.save(binding)
+                    self?.eventTap?.updateBinding(binding)
                 },
                 onRecording: { [weak self] suspended in
                     self?.eventTap?.recordingSuspended = suspended
@@ -331,7 +331,7 @@ enum StatusMenuModel {
 /// without a project-file edit.
 @MainActor
 final class PreferencesWindowController: NSWindowController {
-    init(onChange: @escaping (HotkeyBindings) -> Void,
+    init(onChange: @escaping (HotkeyBinding) -> Void,
          onRecording: @escaping (Bool) -> Void) {
         let root = HotkeySettingsView(onChange: onChange, onRecording: onRecording)
         let window = NSWindow(
