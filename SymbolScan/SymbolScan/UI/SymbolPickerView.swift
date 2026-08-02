@@ -1,4 +1,6 @@
 import SwiftUI
+import AppKit
+import Carbon
 
 /// How the picker resolved — drives what the controller does on close.
 enum PickerAction {
@@ -10,7 +12,6 @@ enum PickerAction {
 }
 
 struct SymbolPickerView: View {
-    let trigger: EventTap.Trigger
     /// Called when the picker resolves (inject / copy / dismiss).
     let onResolve: (PickerAction) -> Void
 
@@ -20,11 +21,9 @@ struct SymbolPickerView: View {
     private let rowHeight: CGFloat = 44
 
     init(viewModel: SymbolPickerViewModel,
-         trigger: EventTap.Trigger,
          onResolve: @escaping (PickerAction) -> Void) {
         _vm = StateObject(wrappedValue: viewModel)
         _index = ObservedObject(wrappedValue: viewModel.index)
-        self.trigger = trigger
         self.onResolve = onResolve
     }
 
@@ -48,8 +47,8 @@ struct SymbolPickerView: View {
 
     private var searchBar: some View {
         HStack(spacing: 10) {
-            // Trigger badge
-            Text(trigger.prefix.isEmpty ? "⌘⇧O" : trigger.prefix)
+            // Trigger badge — the combo actually bound to the hotkey (reflects user config).
+            Text(HotkeyPreference.load().displayString)
                 .font(.system(size: 11, weight: .semibold, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 6)
@@ -189,12 +188,32 @@ struct SearchFieldRepresentable: NSViewRepresentable {
         field.delegate = context.coordinator
         field.stringValue = vm.query
 
-        // The borderless window must be key before it can hold first responder; defer a
-        // tick so makeKeyAndOrderFront has run.
-        DispatchQueue.main.async { [weak field] in
-            field?.window?.makeFirstResponder(field)
-        }
+        // The borderless window must be *key* before it can hold first responder. App activation
+        // (in `OverlayWindowController.show`) is async, so the window isn't key on this runloop turn
+        // — poll briefly until it is, then grab focus. Without this the field silently fails to
+        // become first responder over apps that are slow to yield (notably terminals like iTerm),
+        // leaving the search bar un-typeable until the user clicks it.
+        Self.grabFocus(field, attempts: 25)
         return field
+    }
+
+    /// Make `field` first responder as soon as its window becomes key, retrying briefly. Each turn
+    /// nudges the window toward key so activation that's still settling completes.
+    private static func grabFocus(_ field: NSTextField?, attempts: Int) {
+        guard let field else { return }
+        guard let window = field.window else {
+            // Not in the view hierarchy yet — try again shortly.
+            if attempts > 0 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { grabFocus(field, attempts: attempts - 1) }
+            }
+            return
+        }
+        if window.isKeyWindow {
+            window.makeFirstResponder(field)
+        } else if attempts > 0 {
+            window.makeKey()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { grabFocus(field, attempts: attempts - 1) }
+        }
     }
 
     func updateNSView(_ nsView: NSTextField, context: Context) {
@@ -334,5 +353,199 @@ enum PickerEmptyState {
         }
         // A repo is active but the current query matches nothing (or it's genuinely empty).
         return Copy(title: "No results for \"\(query)\"", hint: nil)
+    }
+}
+
+// MARK: - Hotkey settings (T6)
+
+/// The trigger-rebinding pane, hosted by `PreferencesWindowController` (in AppDelegate.swift). Holds
+/// the working `HotkeyBinding` in `@State`; `onChange` persists + live-reloads it, `onRecording`
+/// suspends the global tap while a combo is being captured. There is a single configurable hotkey.
+/// Lives here (with `KeyRecorderView`) rather than its own file so it builds without a project-file
+/// edit.
+struct HotkeySettingsView: View {
+    @State private var binding: HotkeyBinding
+    /// Shows a persistent "Saved" confirmation after a capture, so it's unambiguous the change stuck
+    /// (recording alone only proves the combo was *read*). Cleared when a new recording starts.
+    @State private var justSaved = false
+    private let onChange: (HotkeyBinding) -> Void
+    private let onRecording: (Bool) -> Void
+
+    init(binding: HotkeyBinding = HotkeyPreference.load(),
+         onChange: @escaping (HotkeyBinding) -> Void,
+         onRecording: @escaping (Bool) -> Void) {
+        _binding = State(initialValue: binding)
+        self.onChange = onChange
+        self.onRecording = onRecording
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Trigger Hotkey").font(.headline)
+            Text("Click the shortcut, then press a new key combination. A modifier is required; Esc cancels.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack {
+                Text("Open the picker")
+                    .font(.system(size: 13))
+                Spacer()
+                KeyRecorderView(
+                    binding: binding,
+                    onCapture: { newBinding in
+                        binding = newBinding
+                        onChange(newBinding)
+                        justSaved = true
+                    },
+                    onRecording: { recording in
+                        if recording { justSaved = false }   // clear a stale confirmation mid-capture
+                        onRecording(recording)
+                    }
+                )
+                .frame(width: 130, height: 26)
+            }
+
+            // Saved confirmation. Reserve the row height either way so the layout doesn't jump.
+            Group {
+                if justSaved {
+                    Label("Saved — \(binding.displayString) is now your hotkey", systemImage: "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                } else {
+                    Text(" ").font(.caption)
+                }
+            }
+            .frame(height: 16, alignment: .leading)
+
+            Divider()
+            Button("Restore Default") {
+                binding = HotkeyPreference.defaultBinding
+                onChange(binding)
+                justSaved = true
+            }
+        }
+        .padding(20)
+        .frame(width: 380)
+    }
+}
+
+/// SwiftUI wrapper over `KeyRecorderNSView`. Modeled on `SearchFieldRepresentable` above — the
+/// in-repo template for "SwiftUI needs responder-level key interception."
+struct KeyRecorderView: NSViewRepresentable {
+    let binding: HotkeyBinding
+    let onCapture: (HotkeyBinding) -> Void
+    let onRecording: (Bool) -> Void
+
+    func makeNSView(context: Context) -> KeyRecorderNSView {
+        KeyRecorderNSView(binding: binding, onCapture: onCapture, onRecording: onRecording)
+    }
+
+    func updateNSView(_ nsView: KeyRecorderNSView, context: Context) {
+        nsView.onCapture = onCapture
+        nsView.onRecording = onRecording
+        nsView.setBindingIfIdle(binding)   // don't overwrite the label mid-capture
+    }
+}
+
+/// A click-to-record shortcut field. Clicking makes it first responder and enters recording mode;
+/// the next key combo (with at least one modifier) is captured, Esc cancels. Requires its window to
+/// be key — the preferences window activates via `NSApp.activate`, same as the overlay.
+final class KeyRecorderNSView: NSView {
+    private(set) var binding: HotkeyBinding { didSet { needsDisplay = true } }
+    var onCapture: (HotkeyBinding) -> Void
+    var onRecording: (Bool) -> Void
+
+    private var isRecording = false { didSet { needsDisplay = true } }
+    private var hint: String?
+
+    init(binding: HotkeyBinding,
+         onCapture: @escaping (HotkeyBinding) -> Void,
+         onRecording: @escaping (Bool) -> Void) {
+        self.binding = binding
+        self.onCapture = onCapture
+        self.onRecording = onRecording
+        super.init(frame: .zero)
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) { fatalError("not implemented") }
+
+    /// Update the shown binding from SwiftUI, but not while the user is mid-capture (that would
+    /// clobber the "Recording…" state).
+    func setBindingIfIdle(_ newBinding: HotkeyBinding) {
+        guard !isRecording else { return }
+        if binding != newBinding { binding = newBinding }
+    }
+
+    override var acceptsFirstResponder: Bool { true }
+    override var intrinsicContentSize: NSSize { NSSize(width: 130, height: 26) }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let radius: CGFloat = 6
+        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: radius, yRadius: radius)
+        (isRecording ? NSColor.controlAccentColor.withAlphaComponent(0.15) : NSColor.controlBackgroundColor).setFill()
+        path.fill()
+        (isRecording ? NSColor.controlAccentColor : NSColor.separatorColor).setStroke()
+        path.lineWidth = isRecording ? 1.5 : 1
+        path.stroke()
+
+        let text = isRecording ? (hint ?? "Recording…") : binding.displayString
+        let color: NSColor = (hint != nil) ? .systemRed : (isRecording ? .controlAccentColor : .labelColor)
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .medium),
+            .foregroundColor: color,
+        ]
+        let str = NSAttributedString(string: text, attributes: attrs)
+        let size = str.size()
+        str.draw(at: NSPoint(x: (bounds.width - size.width) / 2,
+                             y: (bounds.height - size.height) / 2))
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        beginRecording()
+    }
+
+    private func beginRecording() {
+        guard !isRecording else { return }
+        hint = nil
+        isRecording = true
+        onRecording(true)
+    }
+
+    private func endRecording() {
+        guard isRecording else { return }
+        hint = nil
+        isRecording = false
+        onRecording(false)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        guard isRecording else { super.keyDown(with: event); return }
+
+        let keyCode = Int(event.keyCode)
+        if keyCode == kVK_Escape {
+            endRecording()   // cancel — keep the existing binding
+            return
+        }
+
+        let modifiers = HotkeyModifiers(nsFlags: event.modifierFlags)
+        guard !modifiers.isEmpty else {
+            // A modifier-less key would fire on every keystroke — reject and keep recording.
+            hint = "Needs a modifier"
+            needsDisplay = true
+            return
+        }
+
+        let captured = HotkeyBinding(keyCode: keyCode, modifiers: modifiers)
+        binding = captured
+        onCapture(captured)
+        endRecording()
+    }
+
+    override func resignFirstResponder() -> Bool {
+        endRecording()   // clicking away cancels an in-progress capture
+        return super.resignFirstResponder()
     }
 }

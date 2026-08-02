@@ -51,6 +51,11 @@ class OverlayWindow: NSWindow {
 // MARK: - Window Controller
 
 class OverlayWindowController: NSWindowController {
+    /// Time to let the previously-focused app regain key after `app.activate()` before we post
+    /// synthetic keystrokes into it. Empirically enough for the frontmost-app handoff to settle;
+    /// because we wait it out here, the subsequent `TextInjector.inject` is called with `after: 0`.
+    private static let focusHandbackDelay: TimeInterval = 0.12
+
     private let index: SymbolIndex
     private var hostingView: NSHostingView<SymbolPickerView>?
 
@@ -59,9 +64,9 @@ class OverlayWindowController: NSWindowController {
     private var previousApp: NSRunningApplication?
     /// The view model backing the currently-shown picker (nil while hidden).
     private var viewModel: SymbolPickerViewModel?
-    /// The trigger that opened the current picker — determines the injected prefix (see
-    /// `injectionPrefix`).
-    private var currentTrigger: EventTap.Trigger?
+    /// The resolved trigger that opened the current picker — its action + whether the marker was
+    /// already typed determine the injected prefix (see `InjectionComposer`).
+    private var currentMatch: HotkeyMatch?
 
     /// Invoked when the user asks to choose a different repo (⌘O or the in-picker action).
     var onChooseRepo: (() -> Void)?
@@ -86,7 +91,7 @@ class OverlayWindowController: NSWindowController {
 
     required init?(coder: NSCoder) { fatalError("not implemented") }
 
-    func show(trigger: EventTap.Trigger) {
+    func show(match: HotkeyMatch) {
         guard let screen = NSScreen.main else { return }
 
         // Capture the app that had focus when the trigger fired — must happen before
@@ -106,9 +111,9 @@ class OverlayWindowController: NSWindowController {
 
         let vm = SymbolPickerViewModel(index: index)
         self.viewModel = vm
-        self.currentTrigger = trigger
+        self.currentMatch = match
 
-        let pickerView = SymbolPickerView(viewModel: vm, trigger: trigger) { [weak self] action in
+        let pickerView = SymbolPickerView(viewModel: vm) { [weak self] action in
             switch action {
             case .inject:     self?.confirmAndHide(inject: true)
             case .copy:       self?.confirmAndHide(inject: false)
@@ -124,9 +129,15 @@ class OverlayWindowController: NSWindowController {
         window?.contentView = hosting
         self.hostingView = hosting
 
+        // Activate the app *before* ordering the window key. An `.accessory` app isn't active by
+        // default, and a borderless window can't reliably become key until the app is active — do it
+        // in the wrong order and the overlay appears without keyboard focus (e.g. the cursor stays
+        // stuck in a terminal and the search field won't accept typing until it's clicked). The
+        // search field then grabs first responder once the window is actually key (see
+        // `SearchFieldRepresentable`).
+        NSApp.activate(ignoringOtherApps: true)
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
     }
 
     func hide() {
@@ -152,7 +163,9 @@ class OverlayWindowController: NSWindowController {
         // (composition kept pure in `InjectionComposer` so it's unit-testable).
         let text = dismissOnly
             ? nil
-            : viewModel?.selectedInjectionText().map { InjectionComposer.compose(trigger: currentTrigger, body: $0) }
+            : viewModel?.selectedInjectionText().map {
+                InjectionComposer.compose(markerAlreadyTyped: currentMatch?.passThrough ?? false, body: $0)
+            }
 
         if inject, let text {
             hide()
@@ -160,7 +173,7 @@ class OverlayWindowController: NSWindowController {
             if let app = previousApp, !app.isTerminated {
                 app.activate()
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.focusHandbackDelay) {
                 TextInjector.inject(text, after: 0)
             }
         } else if !inject, let text {
@@ -179,20 +192,18 @@ class OverlayWindowController: NSWindowController {
 /// Pure composition of the text injected/copied when a picker row is chosen, split out (like
 /// `OverlayPlacement` / `StatusMenuModel`) so it's unit-testable without AppKit.
 ///
-/// `Symbol.injectionText` supplies the reference *body*; the leading marker comes from the trigger:
-/// the `@`/`#` triggers pass their keystroke through to the target app (see `EventTap`), so the
-/// marker is already in the buffer and we add nothing — otherwise it doubles (`@@…`). The `⌘⇧O`
-/// trigger types nothing, so we supply a leading `@` to match the same reference shape.
+/// `Symbol.injectionText` supplies the reference *body*; the leading marker comes from the trigger.
+/// When the bound keystroke already typed the marker into the target app (`markerAlreadyTyped` — the
+/// matcher's pass-through bit, true only if the user rebound the trigger to `@`/`#`), we add nothing,
+/// or it doubles (`@@…`). Otherwise — the default ⌘⇧O trigger, or any combo that types nothing — we
+/// prepend `HotkeyMatcher.marker` so the reference has the same shape.
 enum InjectionComposer {
-    static func prefix(for trigger: EventTap.Trigger?) -> String {
-        switch trigger {
-        case .at, .hash: return ""     // already typed into the target app
-        default:         return "@"    // ⌘⇧O (or none) — nothing was typed
-        }
+    static func prefix(markerAlreadyTyped: Bool) -> String {
+        markerAlreadyTyped ? "" : HotkeyMatcher.marker
     }
 
-    static func compose(trigger: EventTap.Trigger?, body: String) -> String {
-        prefix(for: trigger) + body
+    static func compose(markerAlreadyTyped: Bool, body: String) -> String {
+        prefix(markerAlreadyTyped: markerAlreadyTyped) + body
     }
 }
 

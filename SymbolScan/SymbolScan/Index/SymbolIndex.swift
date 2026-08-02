@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import CryptoKit
+import os
 
 @MainActor
 class SymbolIndex: ObservableObject {
@@ -69,7 +70,7 @@ class SymbolIndex: ObservableObject {
             symbolCount = cached.count
             isIndexing = false
             publishEpoch += 1
-            print("💾 Loaded \(cached.count) cached symbols for \(root.lastPathComponent)")
+            Log.index.info("Loaded \(cached.count) cached symbols for \(root.lastPathComponent, privacy: .public)")
         } else {
             startJob(root: root, force: false)
         }
@@ -127,7 +128,7 @@ class SymbolIndex: ObservableObject {
                 lastIndexError = nil
                 publishEpoch += 1
             }
-            print("✅ Indexed \(result.symbols.count) symbols across \(result.fileCount) files in \(root.lastPathComponent)")
+            Log.index.info("Indexed \(result.symbols.count) symbols across \(result.fileCount) files in \(root.lastPathComponent, privacy: .public)")
             IndexNotifier.notifyIndexed(root: root, count: result.symbols.count)
         case .failure(let error):
             if error is CancellationError { return }   // replaced by a forced re-index
@@ -136,7 +137,7 @@ class SymbolIndex: ObservableObject {
                 isIndexing = false
                 lastIndexError = error.localizedDescription
             }
-            print("❌ Indexing error for \(root.lastPathComponent): \(error)")
+            Log.index.error("Indexing error for \(root.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
             if error is IndexError { onRepoInvalid?(root) }
         }
     }
@@ -196,12 +197,13 @@ class SymbolIndex: ObservableObject {
 
     // MARK: - Search
 
-    /// Strict-substring symbol search — returns the top 10 results ranked by score.
-    /// Ranking/matching lives in `SymbolMatcher` so it can be unit-tested in isolation.
+    /// Strict-substring symbol search — returns the top `SymbolMatcher.defaultResultLimit` results
+    /// ranked by score. Ranking/matching lives in `SymbolMatcher` so it can be unit-tested in isolation.
     func search(_ query: String) -> [Symbol] {
         let results = SymbolMatcher.search(query, in: symbols)
         #if DEBUG
-        print("🔎 search(\"\(query)\") → \(results.count): \(results.map(\.name))")
+        // Query text is the user's typing — keep it `.private` so it's redacted in captured logs.
+        Log.search.debug("search(\(query, privacy: .private)) → \(results.count) results")
         #endif
         return results
     }
@@ -229,9 +231,13 @@ class SymbolIndex: ObservableObject {
 /// the query "set").
 enum SymbolMatcher {
 
+    /// How many results the picker shows by default. Small on purpose: the overlay lists a short,
+    /// scannable set rather than every match, and strict-substring ranking puts the best ones first.
+    static let defaultResultLimit = 10
+
     /// Returns the best `limit` symbols for `query`, ranked by `score` descending.
     /// An empty query returns the first `limit` symbols unranked.
-    static func search(_ query: String, in symbols: [Symbol], limit: Int = 10) -> [Symbol] {
+    static func search(_ query: String, in symbols: [Symbol], limit: Int = defaultResultLimit) -> [Symbol] {
         guard !query.isEmpty else {
             return Array(symbols.prefix(limit))
         }
@@ -339,7 +345,7 @@ enum IndexCache {
             try data.write(to: url, options: .atomic)
             return true
         } catch {
-            print("⚠️ Failed to write index cache: \(error)")
+            Log.index.error("Failed to write index cache: \(error.localizedDescription, privacy: .public)")
             return false
         }
     }
