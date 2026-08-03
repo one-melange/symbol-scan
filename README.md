@@ -48,7 +48,7 @@ your target app:
 
 ## Requirements
 
-- **macOS 26** (Tahoe) or later
+- **macOS 14** (Sonoma) or later
 - **Xcode 26.5** or later (to build)
 - An Apple ID for code signing — a free Personal Team is enough; no paid Developer Program
   required. Stable signing is what lets macOS keep the Accessibility grant across rebuilds
@@ -74,6 +74,20 @@ cd symbol-scan
    → enable **SymbolScan**). This is required for the global hotkey.
 5. From the menu-bar item, choose a git repo to index (**Choose Repo…**), then press `@`, `#`,
    or `⌘⇧O` in any app to bring up the picker.
+
+## Install it (run outside Xcode)
+
+SymbolScan is a menu-bar app, so day-to-day you want it running without Xcode open. Once your
+signing is set up (step 2 above), install a Release build into `/Applications`:
+
+```bash
+./scripts/install.sh
+```
+
+This builds Release, copies `SymbolScan.app` to `/Applications`, and launches it — after which
+you can start it any time from Spotlight or Finder. To have it start automatically, open the
+menu-bar menu and tick **Open at Login** (registered via `SMAppService`; meaningful only for the
+installed `/Applications` copy, not a build launched from Xcode).
 
 ## How it works
 
