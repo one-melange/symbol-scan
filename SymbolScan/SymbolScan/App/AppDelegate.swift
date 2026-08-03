@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Combine
+import ServiceManagement
 import os
 
 // MARK: - Logging
@@ -22,6 +23,30 @@ enum Log {
     static let scanner = Logger(subsystem: subsystem, category: "scanner")
     static let parser  = Logger(subsystem: subsystem, category: "parser")
     static let notify  = Logger(subsystem: subsystem, category: "notifications")
+}
+
+// MARK: - Login item
+
+/// Wraps `SMAppService.mainApp` (macOS 13+) so SymbolScan can register itself to launch at login —
+/// the "consistently launch it" half of T24. Meaningful only for an **installed** build: a login
+/// item registered from a DerivedData/Xcode path points at a location macOS won't relaunch, so pair
+/// this with `scripts/install.sh` (which puts SymbolScan.app in /Applications). Lives here so it
+/// builds without a project-file edit, like `StatusItemController` below.
+enum LoginItem {
+    static var isEnabled: Bool { SMAppService.mainApp.status == .enabled }
+
+    /// Register/unregister the app as a login item. Returns the resulting enabled state; on failure
+    /// it logs and returns the unchanged state so the menu checkmark stays truthful.
+    @discardableResult
+    static func setEnabled(_ enabled: Bool) -> Bool {
+        do {
+            if enabled { try SMAppService.mainApp.register() }
+            else       { try SMAppService.mainApp.unregister() }
+        } catch {
+            Log.app.error("Login item \(enabled ? "register" : "unregister", privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+        }
+        return isEnabled
+    }
 }
 
 @main
@@ -278,6 +303,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         hotkeys.target = self
         menu.addItem(hotkeys)
 
+        let login = NSMenuItem(title: "Open at Login", action: #selector(toggleLoginItem), keyEquivalent: "")
+        login.target = self
+        login.state = LoginItem.isEnabled ? .on : .off
+        menu.addItem(login)
+
         // Recent repos (excluding the active one) for quick switching.
         let recents = RepoPreference.loadRecents().filter { $0.path != index.indexedRepoRoot?.path }
         if !recents.isEmpty {
@@ -302,6 +332,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     @objc private func chooseRepo() { onChooseRepo() }
     @objc private func reindexRepo() { onReindex() }
     @objc private func openHotkeys() { onOpenHotkeys() }
+    /// Menu rebuilds on every open (`menuNeedsUpdate`), so the checkmark re-reads `LoginItem.isEnabled`
+    /// next time — no need to mutate the item here beyond flipping the registration.
+    @objc private func toggleLoginItem() { LoginItem.setEnabled(!LoginItem.isEnabled) }
     @objc private func switchRepo(_ sender: NSMenuItem) {
         guard let url = sender.representedObject as? URL else { return }
         onSwitch(url)

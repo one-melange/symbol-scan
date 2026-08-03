@@ -59,6 +59,41 @@ Work on a feature branch with Claude Code, then build and run from Xcode:
 
 ---
 
+## Install / run outside Xcode
+
+SymbolScan is a menu-bar (`.accessory`) app — for real use you want it running without Xcode
+attached. Install a Release build into `/Applications`:
+
+```bash
+./scripts/install.sh
+```
+
+The script builds Release, quits any running copy, replaces `/Applications/SymbolScan.app`, and
+launches it. Signing comes from your normal `Local.xcconfig` (`DEVELOPMENT_TEAM`) — the same stable
+identity that keeps the Accessibility grant alive, so reinstalls don't re-prompt.
+
+Once it's running, open the menu-bar menu and tick **Open at Login** to have it start automatically
+on future logins. This registers the app via `SMAppService.mainApp`; it's only meaningful for the
+installed `/Applications` copy — a login item pointing at a DerivedData/Xcode build path won't
+relaunch. The app ships as an agent (`LSUIElement`), so it starts straight into the menu bar with
+no dock icon or launch flash.
+
+### Changing the app icon
+
+The icon is a single **1024×1024** PNG (transparent corners — you draw the rounded squircle
+yourself; macOS does not mask it) at:
+
+```
+SymbolScan/SymbolScan/Assets.xcassets/AppIcon.appiconset/icon.png
+```
+
+The set uses the single-size format (one image assigned to the `mac` `512pt@2x` slot), so to
+replace the icon just drop in a new 1024×1024 `icon.png` — no `Contents.json` edit. macOS scales
+that master down for smaller displays (Finder lists, etc.); if a hand-tuned small size is ever
+needed, add the per-size PNGs (16/32/64/128/256/512) back to the set.
+
+---
+
 ## Testing
 
 Unit and headless-interaction tests live in the **SymbolScanTests** target (Swift Testing).
