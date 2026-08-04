@@ -18,20 +18,27 @@ cd "$(dirname "$0")/.."
 
 PROJECT="SymbolScan/SymbolScan.xcodeproj"
 DEST="/Applications/SymbolScan.app"
-DERIVED="$(mktemp -d)"
-trap 'rm -rf "$DERIVED"' EXIT
 
 echo "▸ Building SymbolScan (Release)…"
 xcodebuild \
   -project "$PROJECT" \
   -scheme SymbolScan \
   -configuration Release \
-  -derivedDataPath "$DERIVED" \
   build
 
-APP="$DERIVED/Build/Products/Release/SymbolScan.app"
-if [[ ! -d "$APP" ]]; then
-  echo "✗ Build did not produce $APP" >&2
+# Locate the built app from the project's own build settings rather than assuming a path.
+# This project pins SYMROOT to SymbolScan/build, so the products never land under a
+# -derivedDataPath — ask xcodebuild where BUILT_PRODUCTS_DIR actually is.
+PRODUCTS_DIR="$(xcodebuild \
+  -project "$PROJECT" \
+  -scheme SymbolScan \
+  -configuration Release \
+  -showBuildSettings 2>/dev/null \
+  | awk -F' = ' '/ BUILT_PRODUCTS_DIR = /{print $2; exit}')"
+APP="$PRODUCTS_DIR/SymbolScan.app"
+
+if [[ -z "$PRODUCTS_DIR" || ! -d "$APP" ]]; then
+  echo "✗ Build did not produce SymbolScan.app (looked in: ${PRODUCTS_DIR:-<unresolved>})" >&2
   exit 1
 fi
 
