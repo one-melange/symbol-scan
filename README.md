@@ -8,6 +8,8 @@ name and path.
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Platform: macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg)
 
+![The SymbolScan picker floating over Claude Code, fuzzy-matching indexed symbols](docs/screenshot.png)
+
 ## Why
 
 I wanted to reference actual functions in my agent's prompts and I didn't want to be limited by the functionality of `@` from Claude and ChatGPT.
