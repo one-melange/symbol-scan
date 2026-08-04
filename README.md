@@ -91,16 +91,28 @@ installed `/Applications` copy, not a build launched from Xcode).
 
 ## How it works
 
-```
-EventTap (global CGEventTap; @ / # / ⌘⇧O)
-  └─> AppDelegate (owns the event tap, index, and overlay)
-        └─> Overlay window + SymbolPickerView          (the picker UI)
-              └─> SymbolIndex.search → SymbolMatcher     (substring ranking)
-                    ▲
-                    │ index built by:
-              RepoScanner (git ls-files) → Indexer → TreeSitterParser
-                                                    (per-language symbol extraction)
-        └─> TextInjector (types into the frontmost app, or copies to the clipboard)
+```mermaid
+flowchart TD
+    Trigger["EventTap — global CGEventTap<br/>(configurable hotkey)"]
+    App["AppDelegate<br/>owns event tap, index, overlay controller"]
+    OWC["OverlayWindowController<br/>OverlayWindow + picker lifecycle"]
+    View["SymbolPickerView (picker UI)"]
+    VM["SymbolPickerViewModel"]
+    Index["SymbolIndex.search → SymbolMatcher<br/>(substring ranking)"]
+    Injector["TextInjector<br/>types into frontmost app, or clipboard"]
+
+    Scanner["RepoScanner (git ls-files)"]
+    Indexer["Indexer"]
+    Parser["SymbolParser → TreeSitterParser<br/>(per-language symbol extraction)"]
+
+    Trigger --> App
+    App --> OWC
+    OWC --> View --> VM --> Index
+    OWC -->|on pick| Injector
+
+    App --> Scanner
+    Scanner --> Indexer --> Parser
+    Parser -->|builds| Index
 ```
 
 The pure, IO-free logic (matching/ranking, per-language queries) is deliberately kept off
