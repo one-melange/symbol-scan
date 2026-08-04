@@ -22,14 +22,14 @@ so the assistant knows exactly where the symbol lives.
 
 ## Triggers
 
-Type one of these anywhere; the picker appears and the trigger character flows through to
-your target app:
+Press the trigger anywhere and the picker appears over the focused app; choose a symbol and
+it's injected there (or copied to the clipboard):
 
 | Trigger | Intended for | Behavior |
 | --- | --- | --- |
-| `@` | Claude Code | Pick a symbol, injected as `@<path>:<line> <name>` |
-| `#` | Codex | Same, prefixed with `#` |
-| `⌘⇧O` | IDE-style "open symbol" | Pick a symbol and inject it into the focused editor |
+| `⌘⇧O` | Just like IDE-style "open symbol" | Pick a symbol and inject it into the focused editor |
+
+The trigger is configurable via the menu bar item for the app.
 
 ## Features
 
@@ -72,8 +72,7 @@ cd symbol-scan
 3. Build and run (`⌘R`).
 4. Grant **Accessibility** when prompted (System Settings → Privacy & Security → Accessibility
    → enable **SymbolScan**). This is required for the global hotkey.
-5. From the menu-bar item, choose a git repo to index (**Choose Repo…**), then press `@`, `#`,
-   or `⌘⇧O` in any app to bring up the picker.
+5. From the menu-bar item, choose a git repo to index (**Choose Repo…**), then press `⌘⇧O` or the configured hotkey in any app to bring up the picker.
 
 ## Install it (run outside Xcode)
 
