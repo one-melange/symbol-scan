@@ -1,6 +1,6 @@
 # SymbolScan
 
-A transparent macOS overlay that helps you drop code symbols into prompts for AI coding
+A macOS overlay that helps you drop code symbols - think functions, files and directories - into prompts for AI coding
 tools like Claude Code and Codex — without leaving your keyboard or hunting for the exact
 name and path.
 
@@ -8,13 +8,18 @@ name and path.
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Platform: macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg)
 
+## Why
+
+I wanted to reference actual functions in my agent's prompts and I didn't want to be limited by the functionality of `@` from Claude and ChatGPT.
+
 ## What it is
 
-When you're prompting an AI coding assistant, you constantly need to name things —
-`SymbolMatcher`, `Index/RepoScanner.swift:42`, a directory path. Typing them from memory is
-slow and error-prone.
+When you're prompting an AI coding assistant, you constantly need to reference things - 
+`SymbolMatcher`, `Index/RepoScanner.swift:42`, a directory path - to keep token use low. 
 
-SymbolScan runs invisibly in the menu bar. A global hotkey pops a transparent picker over
+Typing them from memory is impossible! Repositories often end up with hundreds of symbols, so you need a way to quickly find the one you need.
+
+SymbolScan runs invisibly in the menu bar. A global hotkey pops a picker over
 whatever app you're in, you type to filter symbols indexed from your current git repo, and
 the one you choose is injected straight into the focused app (or copied to the clipboard).
 Code symbols are injected as a file-anchored reference like `@Index/SymbolIndex.swift:105 search`,
@@ -22,14 +27,14 @@ so the assistant knows exactly where the symbol lives.
 
 ## Triggers
 
-Type one of these anywhere; the picker appears and the trigger character flows through to
-your target app:
+Press the trigger anywhere and the picker appears over the focused app; choose a symbol and
+it's injected there (or copied to the clipboard):
 
 | Trigger | Intended for | Behavior |
 | --- | --- | --- |
-| `@` | Claude Code | Pick a symbol, injected as `@<path>:<line> <name>` |
-| `#` | Codex | Same, prefixed with `#` |
-| `⌘⇧O` | IDE-style "open symbol" | Pick a symbol and inject it into the focused editor |
+| `⌘⇧O` | Just like IDE-style "open symbol" | Pick a symbol and inject it into the focused editor |
+
+The trigger is configurable via the menu bar item for the app.
 
 ## Features
 
@@ -45,6 +50,7 @@ your target app:
   index is built off the main thread and cached per repo, so repo switches and relaunches
   skip the rescan.
 - **Inject or copy** — types into the frontmost app when possible, falls back to the clipboard.
+- **No MCP** — unlike CodeGraph and graphify, SymbolScan is batteries included and works out of the box.
 
 ## Requirements
 
@@ -72,8 +78,7 @@ cd symbol-scan
 3. Build and run (`⌘R`).
 4. Grant **Accessibility** when prompted (System Settings → Privacy & Security → Accessibility
    → enable **SymbolScan**). This is required for the global hotkey.
-5. From the menu-bar item, choose a git repo to index (**Choose Repo…**), then press `@`, `#`,
-   or `⌘⇧O` in any app to bring up the picker.
+5. From the menu-bar item, choose a git repo to index (**Choose Repo…**), then press `⌘⇧O` or the configured hotkey in any app to bring up the picker.
 
 ## Install it (run outside Xcode)
 
@@ -91,16 +96,28 @@ installed `/Applications` copy, not a build launched from Xcode).
 
 ## How it works
 
-```
-EventTap (global CGEventTap; @ / # / ⌘⇧O)
-  └─> AppDelegate (owns the event tap, index, and overlay)
-        └─> Overlay window + SymbolPickerView          (the picker UI)
-              └─> SymbolIndex.search → SymbolMatcher     (substring ranking)
-                    ▲
-                    │ index built by:
-              RepoScanner (git ls-files) → Indexer → TreeSitterParser
-                                                    (per-language symbol extraction)
-        └─> TextInjector (types into the frontmost app, or copies to the clipboard)
+```mermaid
+flowchart TD
+    Trigger["EventTap — global CGEventTap<br/>(configurable hotkey)"]
+    App["AppDelegate<br/>owns event tap, index, overlay controller"]
+    OWC["OverlayWindowController<br/>OverlayWindow + picker lifecycle"]
+    View["SymbolPickerView (picker UI)"]
+    VM["SymbolPickerViewModel"]
+    Index["SymbolIndex.search → SymbolMatcher<br/>(substring ranking)"]
+    Injector["TextInjector<br/>types into frontmost app, or clipboard"]
+
+    Scanner["RepoScanner (git ls-files)"]
+    Indexer["Indexer"]
+    Parser["SymbolParser → TreeSitterParser<br/>(per-language symbol extraction)"]
+
+    Trigger --> App
+    App --> OWC
+    OWC --> View --> VM --> Index
+    OWC -->|on pick| Injector
+
+    App --> Scanner
+    Scanner --> Indexer --> Parser
+    Parser -->|builds| Index
 ```
 
 The pure, IO-free logic (matching/ranking, per-language queries) is deliberately kept off
