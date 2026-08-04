@@ -13,7 +13,6 @@ class OverlayWindow: NSWindow {
         )
 
         // Core overlay properties
-        self.sharingType = .none              // invisible to screen capture
         self.level = .floating                // above normal windows
         self.isOpaque = false
         self.backgroundColor = .clear
