@@ -1,6 +1,6 @@
 # SymbolScan
 
-A transparent macOS overlay that helps you drop code symbols into prompts for AI coding
+A macOS overlay that helps you drop code symbols - think functions, files and directories - into prompts for AI coding
 tools like Claude Code and Codex — without leaving your keyboard or hunting for the exact
 name and path.
 
@@ -8,13 +8,18 @@ name and path.
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Platform: macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg)
 
+## Why
+
+I wanted to reference actual functions in my agent's prompts and I didn't want to be limited by the functionality of `@` from Claude and ChatGPT.
+
 ## What it is
 
-When you're prompting an AI coding assistant, you constantly need to name things —
-`SymbolMatcher`, `Index/RepoScanner.swift:42`, a directory path. Typing them from memory is
-slow and error-prone.
+When you're prompting an AI coding assistant, you constantly need to reference things - 
+`SymbolMatcher`, `Index/RepoScanner.swift:42`, a directory path - to keep token use low. 
 
-SymbolScan runs invisibly in the menu bar. A global hotkey pops a transparent picker over
+Typing them from memory is impossible! Repositories often end up with hundreds of symbols, so you need a way to quickly find the one you need.
+
+SymbolScan runs invisibly in the menu bar. A global hotkey pops a picker over
 whatever app you're in, you type to filter symbols indexed from your current git repo, and
 the one you choose is injected straight into the focused app (or copied to the clipboard).
 Code symbols are injected as a file-anchored reference like `@Index/SymbolIndex.swift:105 search`,
@@ -45,6 +50,7 @@ The trigger is configurable via the menu bar item for the app.
   index is built off the main thread and cached per repo, so repo switches and relaunches
   skip the rescan.
 - **Inject or copy** — types into the frontmost app when possible, falls back to the clipboard.
+- **No MCP** — unlike CodeGraph and graphify, SymbolScan is batteries included and works out of the box.
 
 ## Requirements
 
