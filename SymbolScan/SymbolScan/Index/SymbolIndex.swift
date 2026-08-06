@@ -38,6 +38,31 @@ class SymbolIndex: ObservableObject {
     /// reparse (so `jobs[root]` is already nil again) would be silently clobbered by stale data.
     private var publishEpoch = 0
 
+    /// Buffered incremental patches not yet written to the on-disk log. Coalesced: a burst of saves
+    /// appends one batch on a debounce (`scheduleFlush`) rather than one write per splice (T23).
+    private var pendingPatches: [IndexCache.Patch] = []
+
+    /// Single-flight guard for the log write, mirroring `incrementalRunning` for the reparse.
+    private var flushing = false
+
+    /// Debounce for the coalesced flush; re-armed on every buffered patch, cancelled on repo switch,
+    /// full scan, or termination.
+    private var flushTask: Task<Void, Never>?
+
+    /// Patch records appended to the current base's log since the last compaction. When it crosses
+    /// `maxJournalPatchesBeforeCompaction`, the next flush rewrites the base and clears the log so
+    /// the log — and the load-time replay cost — stays bounded.
+    private var journaledPatchCount = 0
+
+    /// Coalescing window: a save burst within this interval flushes as one appended write. Short so
+    /// a crash/quit loses at most this much of the (self-healing) on-disk cache; the in-memory index
+    /// is always current regardless.
+    private static let incrementalFlushDelay: TimeInterval = 2.0
+
+    /// Compact (full base rewrite + log clear) once the log holds this many patch records, bounding
+    /// log growth and replay cost across a long session of edits.
+    private static let maxJournalPatchesBeforeCompaction = 200
+
     // MARK: - Activation
 
     /// Make `root` the active repo (what the picker searches). Non-blocking: loads the on-disk
@@ -45,11 +70,14 @@ class SymbolIndex: ObservableObject {
     /// All heavy work runs off the main thread, and switching repos never cancels another repo's
     /// in-flight job — so a long index keeps running while the user works elsewhere.
     func activateRepo(_ root: URL) {
+        flushBufferedPatches()   // persist anything still queued for the previously-active repo
         indexedRepoRoot = root
         lastIndexError = nil
         symbols = []
         symbolCount = 0
         pendingChanges = []   // drop any changes queued for the previously-active repo
+        pendingPatches = []   // …and its unflushed patches (flushBufferedPatches wrote them)
+        journaledPatchCount = 0
         publishEpoch += 1     // invalidate any in-flight incremental from the previous view
         isIndexing = jobs[root] != nil   // reflect an already-running background job for this repo
 
@@ -58,16 +86,20 @@ class SymbolIndex: ObservableObject {
         // actor isolation — a plain `Task {}` here would inherit `@MainActor` and block the UI.
         Task.detached(priority: .userInitiated) { [weak self] in
             let cached = await Indexer.loadCache(root: root)
-            await self?.applyActivation(root: root, cached: cached)
+            // Seed the journal counter from the log we just replayed, so compaction accounts for
+            // patches carried over from previous sessions rather than only this session's.
+            let patchCount = cached == nil ? 0 : IndexCache.loadPatches(for: root).count
+            await self?.applyActivation(root: root, cached: cached, journaledPatches: patchCount)
         }
     }
 
     /// Main-actor apply for `activateRepo`'s off-main cache probe.
-    private func applyActivation(root: URL, cached: [Symbol]?) {
+    private func applyActivation(root: URL, cached: [Symbol]?, journaledPatches: Int) {
         guard indexedRepoRoot == root else { return }   // superseded by a newer switch
         if let cached {
             symbols = cached
             symbolCount = cached.count
+            journaledPatchCount = journaledPatches
             isIndexing = false
             publishEpoch += 1
             Log.index.info("Loaded \(cached.count) cached symbols for \(root.lastPathComponent, privacy: .public)")
@@ -98,6 +130,11 @@ class SymbolIndex: ObservableObject {
         if root == indexedRepoRoot {
             isIndexing = true
             lastIndexError = nil
+            // A full scan will `compact` an authoritative base + empty log, so drop any buffered
+            // increments and cancel their flush — appending them afterward would orphan the log.
+            pendingPatches = []
+            flushTask?.cancel()
+            flushTask = nil
         }
         // `Task.detached` (not `Task {}`) so the heavy scan/parse runs with no actor isolation and
         // never touches the main thread; results are handed back via the `@MainActor` `finishJob`.
@@ -127,6 +164,12 @@ class SymbolIndex: ObservableObject {
                 isIndexing = false
                 lastIndexError = nil
                 publishEpoch += 1
+                // `buildIndex` compacted a fresh base with an empty log — reset the journal so it
+                // doesn't count against the next compaction.
+                pendingPatches = []
+                journaledPatchCount = 0
+                flushTask?.cancel()
+                flushTask = nil
             }
             Log.index.info("Indexed \(result.symbols.count) symbols across \(result.fileCount) files in \(root.lastPathComponent, privacy: .public)")
             IndexNotifier.notifyIndexed(root: root, count: result.symbols.count)
@@ -177,22 +220,93 @@ class SymbolIndex: ObservableObject {
         let epoch = publishEpoch        // …and the epoch it belongs to
 
         Task.detached(priority: .utility) { [weak self] in
-            let updated = await Indexer.reindexFiles(batch, root: root, existing: snapshot)
-            await self?.finishIncremental(root: root, updated: updated, epoch: epoch)
+            let result = await Indexer.reindexFiles(batch, root: root, existing: snapshot)
+            await self?.finishIncremental(root: root, updated: result.symbols, patch: result.patch, epoch: epoch)
         }
     }
 
     /// Main-actor completion for an incremental splice. Publishes silently — no `IndexNotifier`
-    /// banner, unlike a full scan — then re-drains to pick up anything that changed mid-splice.
-    private func finishIncremental(root: URL, updated: [Symbol], epoch: Int) {
+    /// banner, unlike a full scan — buffers the patch for a coalesced write, then re-drains to pick
+    /// up anything that changed mid-splice.
+    private func finishIncremental(root: URL, updated: [Symbol], patch: IndexCache.Patch, epoch: Int) {
         incrementalRunning = false
         // Discard if the repo switched away, a full (re)index is running or has published since we
-        // snapshotted (epoch bumped), leaving that authoritative result in place.
+        // snapshotted (epoch bumped), leaving that authoritative result in place — and drop the
+        // patch too, since that authoritative base already reflects (or will reflect) the change.
         if root == indexedRepoRoot, jobs[root] == nil, epoch == publishEpoch {
             symbols = updated
             symbolCount = updated.count
+            if !patch.paths.isEmpty {
+                pendingPatches.append(patch)
+                scheduleFlush(root: root)
+            }
         }
         drainIncremental(root: root)
+    }
+
+    // MARK: - Coalesced cache writes (T23)
+
+    /// (Re)arm the debounce so a burst of splices produces one log write. Each buffered patch
+    /// restarts the timer; the flush fires once the saves quiesce for `incrementalFlushDelay`.
+    private func scheduleFlush(root: URL) {
+        flushTask?.cancel()
+        flushTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.incrementalFlushDelay * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            self?.flushNow(root: root)
+        }
+    }
+
+    /// Persist buffered patches off the main actor: a plain log append, or — once the log has grown
+    /// past `maxJournalPatchesBeforeCompaction` — a full base rewrite that collapses the log. Guards
+    /// mirror `drainIncremental` (active repo, no full scan running, single-flight).
+    private func flushNow(root: URL) {
+        guard root == indexedRepoRoot,
+              jobs[root] == nil,
+              !flushing,
+              !pendingPatches.isEmpty else { return }
+
+        flushing = true
+        let batch = pendingPatches
+        pendingPatches = []
+        let willCompact = journaledPatchCount + batch.count > Self.maxJournalPatchesBeforeCompaction
+        // Compaction writes the whole in-memory array (which already includes every buffered patch,
+        // published before the patch was buffered), so it supersedes the batch rather than appending it.
+        let snapshot = willCompact ? symbols : nil
+
+        Task.detached(priority: .utility) { [weak self] in
+            if let snapshot {
+                IndexCache.compact(snapshot, for: root)
+            } else {
+                IndexCache.appendPatches(batch, for: root)
+            }
+            await self?.finishFlush(root: root, compacted: snapshot != nil, appended: batch.count)
+        }
+    }
+
+    /// Main-actor completion for a flush: update the journal counter and re-arm if patches queued
+    /// while the write was in flight.
+    private func finishFlush(root: URL, compacted: Bool, appended: Int) {
+        flushing = false
+        journaledPatchCount = compacted ? 0 : journaledPatchCount + appended
+        if root == indexedRepoRoot, !pendingPatches.isEmpty { scheduleFlush(root: root) }
+    }
+
+    /// Immediately persist (append) any buffered patches for the currently-active repo, off the
+    /// main actor. Used before switching repos and at termination so queued increments aren't lost.
+    /// Append is safe even after the active repo changes — it targets `root`'s own log file.
+    private func flushBufferedPatches() {
+        flushTask?.cancel()
+        flushTask = nil
+        guard let root = indexedRepoRoot, !pendingPatches.isEmpty else { return }
+        let batch = pendingPatches
+        pendingPatches = []
+        Task.detached(priority: .utility) { IndexCache.appendPatches(batch, for: root) }
+    }
+
+    /// Flush buffered writes at app termination (see `AppDelegate.applicationWillTerminate`).
+    func flushPendingWrites() {
+        flushBufferedPatches()
     }
 
     // MARK: - Search
@@ -275,12 +389,18 @@ enum SymbolMatcher {
 // MARK: - Index cache (on-disk persistence)
 
 /// Per-repo symbol cache so switching to a previously-indexed repo is instant instead of a full
-/// rescan. One JSON file per repo under Application Support, named by a hash of the repo's absolute
-/// path (Application Support, not Caches — the OS may purge Caches, which would defeat the point).
+/// rescan. Two files per repo under Application Support, named by a hash of the repo's absolute
+/// path (Application Support, not Caches — the OS may purge Caches, which would defeat the point):
+/// a `<hash>.json` **base snapshot** and a `<hash>.log` **append-only patch log** (T23).
+///
+/// The base is the whole symbol array; each incremental save appends one small `Patch` line to the
+/// log instead of rewriting the base, so a save's write cost is proportional to the change, not the
+/// repo size. Loading replays the log over the base (see `Indexer.loadCache`). A full reindex or a
+/// grown log triggers `compact`, which rewrites the base and clears the log.
 ///
 /// Lives here (rather than its own file) so it builds without a project-file edit. The pure
-/// `encode`/`decode` are separated from the disk IO so the codec is unit-testable without touching
-/// the filesystem.
+/// `encode`/`decode` (and `encodePatch`/`decodePatch`) are separated from the disk IO so the codec
+/// is unit-testable without touching the filesystem.
 enum IndexCache {
     /// Bump when the payload shape *or content* changes; a mismatch makes `decode` return nil →
     /// forces a rescan. v2: added `.file`/`.directory` entries. v3: symbols now come from
@@ -289,12 +409,23 @@ enum IndexCache {
     /// those symbols entirely, and would otherwise be served forever. v5: the git enumeration
     /// path now excludes `target`/`vendor`/`__pycache__`/`.next`/`dist`, caps parse file size,
     /// and skips symlinked dirs — pre-v5 caches can contain now-excluded entries (and the
-    /// incremental writer must never patch a stale v4 array into an inconsistent mix).
-    static let version = 5
+    /// incremental writer must never patch a stale v4 array into an inconsistent mix). v6: the
+    /// cache is now a base snapshot + append-only patch log (T23) — a pre-v6 base has no log, so
+    /// forcing a rescan on upgrade guarantees base and log start consistent.
+    static let version = 6
 
     private struct Payload: Codable {
         var version: Int
         var repoPath: String
+        var symbols: [Symbol]
+    }
+
+    /// One incremental update, appended to the log as a single JSONL line. `paths` is the full
+    /// changed set (so a deleted / now-ignored file, which contributes no `symbols`, still has its
+    /// old entries removed on replay); `symbols` are the freshly-parsed **code + `.file`** entries
+    /// for the surviving files — never `.directory`, which is always derived (see `Indexer.normalize`).
+    struct Patch: Codable {
+        var paths: [String]
         var symbols: [Symbol]
     }
 
@@ -309,6 +440,16 @@ enum IndexCache {
         guard let payload = try? JSONDecoder().decode(Payload.self, from: data),
               payload.version == version else { return nil }
         return payload.symbols
+    }
+
+    /// Encodes one patch as a single line (no embedded newlines — `JSONEncoder` never emits them
+    /// for a compact object, so one `Patch` maps to exactly one log line).
+    static func encodePatch(_ patch: Patch) -> Data? {
+        try? JSONEncoder().encode(patch)
+    }
+
+    static func decodePatch(_ data: Data) -> Patch? {
+        try? JSONDecoder().decode(Patch.self, from: data)
     }
 
     // MARK: Disk IO
@@ -330,6 +471,11 @@ enum IndexCache {
         base?.appendingPathComponent(fileName(for: repoRoot))
     }
 
+    /// The patch log sits beside the base snapshot: `<hash>.json` → `<hash>.log`.
+    static func logURL(for repoRoot: URL, base: URL? = baseDirectory()) -> URL? {
+        cacheURL(for: repoRoot, base: base)?.deletingPathExtension().appendingPathExtension("log")
+    }
+
     static func load(for repoRoot: URL, base: URL? = baseDirectory()) -> [Symbol]? {
         guard let url = cacheURL(for: repoRoot, base: base),
               let data = try? Data(contentsOf: url) else { return nil }
@@ -348,5 +494,59 @@ enum IndexCache {
             Log.index.error("Failed to write index cache: \(error.localizedDescription, privacy: .public)")
             return false
         }
+    }
+
+    /// Append `patches` to the repo's log as newline-terminated JSON lines. Plain append (not an
+    /// atomic full rewrite) — that's the whole point of the journal — and crash-safe: a torn final
+    /// line just fails to decode and is skipped by `loadPatches`. Returns false if nothing durable
+    /// happened (no base dir, encode failure, or IO error).
+    @discardableResult
+    static func appendPatches(_ patches: [Patch], for repoRoot: URL, base: URL? = baseDirectory()) -> Bool {
+        guard !patches.isEmpty, let base, let url = logURL(for: repoRoot, base: base) else { return false }
+        var blob = Data()
+        for patch in patches {
+            guard let line = encodePatch(patch) else { continue }
+            blob.append(line)
+            blob.append(0x0A)   // '\n'
+        }
+        guard !blob.isEmpty else { return false }
+        do {
+            try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+            if let handle = try? FileHandle(forWritingTo: url) {
+                defer { try? handle.close() }
+                try handle.seekToEnd()
+                try handle.write(contentsOf: blob)
+            } else {
+                // No file yet → create it with the first batch.
+                try blob.write(to: url)
+            }
+            return true
+        } catch {
+            Log.index.error("Failed to append index patch log: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
+    }
+
+    /// Read every well-formed patch line from the repo's log, in order. Missing log → empty.
+    /// Malformed lines (e.g. a torn trailing append) are skipped rather than aborting the load.
+    static func loadPatches(for repoRoot: URL, base: URL? = baseDirectory()) -> [Patch] {
+        guard let url = logURL(for: repoRoot, base: base),
+              let data = try? Data(contentsOf: url) else { return [] }
+        return data.split(separator: 0x0A).compactMap { decodePatch(Data($0)) }
+    }
+
+    static func clearLog(for repoRoot: URL, base: URL? = baseDirectory()) {
+        guard let url = logURL(for: repoRoot, base: base) else { return }
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    /// Rewrite the base snapshot from the authoritative in-memory `symbols` and clear the log — the
+    /// amortized full write that collapses the journal back into the base. Used by a full reindex
+    /// and when the log grows past the coalescing threshold.
+    @discardableResult
+    static func compact(_ symbols: [Symbol], for repoRoot: URL, base: URL? = baseDirectory()) -> Bool {
+        let ok = save(symbols, for: repoRoot, base: base)
+        if ok { clearLog(for: repoRoot, base: base) }
+        return ok
     }
 }

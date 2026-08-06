@@ -200,6 +200,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return false
     }
+
+    /// Persist any buffered incremental cache writes before we exit, so a quit mid-debounce doesn't
+    /// drop the last few saves' worth of index updates (T23). The in-memory index is always current;
+    /// this just keeps the on-disk cache from lagging across a restart.
+    func applicationWillTerminate(_ notification: Notification) {
+        symbolIndex?.flushPendingWrites()
+    }
 }
 
 // MARK: - Status item

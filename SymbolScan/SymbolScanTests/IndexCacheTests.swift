@@ -67,4 +67,87 @@ import Foundation
         #expect(a != b)                                                             // distinct
         #expect(a.hasSuffix(".json"))
     }
+
+    // MARK: - Patch journal (T23)
+
+    private func tempBase() -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("ic-log-\(UUID().uuidString)")
+    }
+
+    @Test func patchEncodeDecodeRoundTrips() throws {
+        let patch = IndexCache.Patch(paths: ["A.swift", "gone.swift"], symbols: sampleSymbols())
+        let data = try #require(IndexCache.encodePatch(patch))
+        // One patch must serialize to a single line (the log is newline-delimited).
+        #expect(!data.contains(0x0A))
+        let decoded = try #require(IndexCache.decodePatch(data))
+        #expect(decoded.paths == patch.paths)
+        #expect(decoded.symbols.map(\.name) == patch.symbols.map(\.name))
+    }
+
+    @Test func appendThenLoadPatchesRoundTrips() {
+        let base = tempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let repo = URL(fileURLWithPath: "/tmp/some/repo")
+
+        let p1 = IndexCache.Patch(paths: ["A.swift"], symbols: [sampleSymbols()[0]])
+        let p2 = IndexCache.Patch(paths: ["B.swift"], symbols: [sampleSymbols()[1]])
+        #expect(IndexCache.appendPatches([p1], for: repo, base: base) == true)
+        #expect(IndexCache.appendPatches([p2], for: repo, base: base) == true)   // second append extends
+
+        let loaded = IndexCache.loadPatches(for: repo, base: base)
+        #expect(loaded.count == 2)
+        #expect(loaded[0].paths == ["A.swift"])   // order preserved
+        #expect(loaded[1].paths == ["B.swift"])
+    }
+
+    @Test func loadPatchesSkipsATornTrailingLine() throws {
+        let base = tempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let repo = URL(fileURLWithPath: "/tmp/some/repo")
+
+        IndexCache.appendPatches([IndexCache.Patch(paths: ["A.swift"], symbols: [])], for: repo, base: base)
+        // Simulate a crash mid-append: a partial JSON line with no trailing newline.
+        let url = try #require(IndexCache.logURL(for: repo, base: base))
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data(#"{"paths":["B.swift"],"sym"#.utf8))
+        try handle.close()
+
+        let loaded = IndexCache.loadPatches(for: repo, base: base)
+        #expect(loaded.count == 1)                 // the good record survives
+        #expect(loaded[0].paths == ["A.swift"])    // the torn one is dropped, not fatal
+    }
+
+    @Test func loadPatchesIsEmptyWhenNoLog() {
+        let base = tempBase()
+        #expect(IndexCache.loadPatches(for: URL(fileURLWithPath: "/tmp/nope"), base: base).isEmpty)
+    }
+
+    @Test func clearLogRemovesIt() {
+        let base = tempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let repo = URL(fileURLWithPath: "/tmp/some/repo")
+
+        IndexCache.appendPatches([IndexCache.Patch(paths: ["A.swift"], symbols: [])], for: repo, base: base)
+        #expect(!IndexCache.loadPatches(for: repo, base: base).isEmpty)
+        IndexCache.clearLog(for: repo, base: base)
+        #expect(IndexCache.loadPatches(for: repo, base: base).isEmpty)
+    }
+
+    @Test func compactWritesBaseAndClearsLog() {
+        let base = tempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let repo = URL(fileURLWithPath: "/tmp/some/repo")
+
+        // Seed a base and a non-empty log.
+        IndexCache.save([sampleSymbols()[0]], for: repo, base: base)
+        IndexCache.appendPatches([IndexCache.Patch(paths: ["A.swift"], symbols: [])], for: repo, base: base)
+
+        #expect(IndexCache.compact(sampleSymbols(), for: repo, base: base) == true)
+        // Base now holds the compacted array…
+        let loadedBase = IndexCache.load(for: repo, base: base)
+        #expect(loadedBase?.map(\.name) == sampleSymbols().map(\.name))
+        // …and the log is gone.
+        #expect(IndexCache.loadPatches(for: repo, base: base).isEmpty)
+    }
 }
