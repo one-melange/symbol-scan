@@ -134,6 +134,52 @@ import Foundation
         #expect(IndexCache.loadPatches(for: repo, base: base).isEmpty)
     }
 
+    /// A crash can leave a torn final line in the log. A later append must not fuse onto it and
+    /// corrupt its own first record — the torn fragment stays a separate (skipped) line.
+    @Test func appendAfterATornTailStaysReadable() throws {
+        let base = tempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let repo = URL(fileURLWithPath: "/tmp/some/repo")
+
+        IndexCache.appendPatches([IndexCache.Patch(paths: ["A.swift"], symbols: [])], for: repo, base: base)
+        // Simulate a crash mid-append: a partial record with no trailing newline.
+        let url = try #require(IndexCache.logURL(for: repo, base: base))
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data(#"{"paths":["B.swift"],"sym"#.utf8))
+        try handle.close()
+
+        IndexCache.appendPatches([IndexCache.Patch(paths: ["C.swift"], symbols: [])], for: repo, base: base)
+
+        let loaded = IndexCache.loadPatches(for: repo, base: base)
+        #expect(loaded.contains { $0.paths == ["A.swift"] })   // original survives
+        #expect(loaded.contains { $0.paths == ["C.swift"] })   // new record readable, not corrupted
+        #expect(!loaded.contains { $0.paths == ["B.swift"] })  // torn fragment still skipped
+    }
+
+    /// A `compact` bumps the repo's write generation; an append tagged with a pre-compact generation
+    /// is dropped as superseded, so a stale incremental write can't land on top of a full reindex.
+    @Test func compactSupersedesAStaleGenerationAppend() {
+        let base = tempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let repo = URL(fileURLWithPath: "/tmp/gen/\(UUID().uuidString)")
+
+        IndexCache.save([sampleSymbols()[0]], for: repo, base: base)
+        let stale = IndexCache.generation(for: repo, base: base)
+        IndexCache.compact(sampleSymbols(), for: repo, base: base)   // authoritative write bumps generation
+
+        let superseded = IndexCache.appendPatches([IndexCache.Patch(paths: ["late.swift"], symbols: [])],
+                                                  for: repo, base: base, ifGeneration: stale)
+        #expect(superseded == false)
+        #expect(IndexCache.loadPatches(for: repo, base: base).isEmpty)   // dropped, log stays clean
+
+        // A write at the current generation still applies.
+        let now = IndexCache.generation(for: repo, base: base)
+        #expect(IndexCache.appendPatches([IndexCache.Patch(paths: ["ok.swift"], symbols: [])],
+                                         for: repo, base: base, ifGeneration: now) == true)
+        #expect(IndexCache.loadPatches(for: repo, base: base).count == 1)
+    }
+
     @Test func compactWritesBaseAndClearsLog() {
         let base = tempBase()
         defer { try? FileManager.default.removeItem(at: base) }

@@ -273,40 +273,57 @@ class SymbolIndex: ObservableObject {
         // Compaction writes the whole in-memory array (which already includes every buffered patch,
         // published before the patch was buffered), so it supersedes the batch rather than appending it.
         let snapshot = willCompact ? symbols : nil
+        // The generation this write is based on — if a full reindex compacts before it lands, the
+        // write is dropped as superseded (its data is already reflected in that fresh base).
+        let generation = IndexCache.generation(for: root)
 
         Task.detached(priority: .utility) { [weak self] in
+            let wrote: Bool
             if let snapshot {
-                IndexCache.compact(snapshot, for: root)
+                wrote = IndexCache.compact(snapshot, for: root, ifGeneration: generation)
             } else {
-                IndexCache.appendPatches(batch, for: root)
+                wrote = IndexCache.appendPatches(batch, for: root, ifGeneration: generation)
             }
-            await self?.finishFlush(root: root, compacted: snapshot != nil, appended: batch.count)
+            await self?.finishFlush(root: root, compacted: snapshot != nil && wrote, appended: wrote ? batch.count : 0)
         }
     }
 
-    /// Main-actor completion for a flush: update the journal counter and re-arm if patches queued
-    /// while the write was in flight.
+    /// Main-actor completion for a flush: update the journal counter (only while `root` is still the
+    /// active repo — a write for a since-switched-away repo must not touch the current repo's count)
+    /// and re-arm the debounce for whatever is active now, so patches buffered mid-flush — including
+    /// a new repo's, if we switched while this flush was in flight — aren't stranded.
     private func finishFlush(root: URL, compacted: Bool, appended: Int) {
         flushing = false
-        journaledPatchCount = compacted ? 0 : journaledPatchCount + appended
-        if root == indexedRepoRoot, !pendingPatches.isEmpty { scheduleFlush(root: root) }
+        if root == indexedRepoRoot {
+            journaledPatchCount = compacted ? 0 : journaledPatchCount + appended
+        }
+        if let active = indexedRepoRoot, !pendingPatches.isEmpty { scheduleFlush(root: active) }
     }
 
-    /// Immediately persist (append) any buffered patches for the currently-active repo, off the
-    /// main actor. Used before switching repos and at termination so queued increments aren't lost.
-    /// Append is safe even after the active repo changes — it targets `root`'s own log file.
+    /// Persist any buffered patches for the currently-active repo before switching away, off the main
+    /// actor. Append is safe even after the active repo changes — it targets `root`'s own log file,
+    /// and the generation guard drops it if a reindex of `root` compacts first.
     private func flushBufferedPatches() {
         flushTask?.cancel()
         flushTask = nil
         guard let root = indexedRepoRoot, !pendingPatches.isEmpty else { return }
         let batch = pendingPatches
         pendingPatches = []
-        Task.detached(priority: .utility) { IndexCache.appendPatches(batch, for: root) }
+        let generation = IndexCache.generation(for: root)
+        Task.detached(priority: .utility) { IndexCache.appendPatches(batch, for: root, ifGeneration: generation) }
     }
 
     /// Flush buffered writes at app termination (see `AppDelegate.applicationWillTerminate`).
+    /// **Synchronous** on purpose: the process is exiting, so a detached task would not be awaited and
+    /// its writes would be lost — the very thing this hook exists to prevent. Blocking the main thread
+    /// for one small append at quit is the correct trade.
     func flushPendingWrites() {
-        flushBufferedPatches()
+        flushTask?.cancel()
+        flushTask = nil
+        guard let root = indexedRepoRoot, !pendingPatches.isEmpty else { return }
+        let batch = pendingPatches
+        pendingPatches = []
+        IndexCache.appendPatches(batch, for: root, ifGeneration: IndexCache.generation(for: root))
     }
 
     // MARK: - Search
@@ -476,14 +493,93 @@ enum IndexCache {
         cacheURL(for: repoRoot, base: base)?.deletingPathExtension().appendingPathExtension("log")
     }
 
+    /// Serializes ALL cache IO for every repo (base writes, log appends, log clears, reads). Cache
+    /// files are written from several off-main tasks at once — a full-scan `compact` and an
+    /// incremental `appendPatches` can be in flight together — so without this a stale append could
+    /// interleave with, or land *after*, an authoritative compaction and restore inconsistent state.
+    /// Writes are small and infrequent, so a single global serial queue is simpler than per-repo
+    /// locks and plenty fast.
+    private static let ioQueue = DispatchQueue(label: "com.symbolscan.indexcache.io")
+
+    /// Per-repo write generation (keyed by cache filename), bumped by every authoritative `compact`.
+    /// An incremental write captures the generation it was scheduled under and is dropped if the
+    /// generation has since advanced — i.e. a full reindex has superseded it. Mutated only on
+    /// `ioQueue`. Process-local (resets on relaunch, where the on-disk base+log are already
+    /// consistent because the last writes were ordered through this queue).
+    private static var generations: [String: Int] = [:]
+
+    /// The current write generation for `repoRoot` — captured by an incremental write so a later
+    /// `compact` can supersede it.
+    static func generation(for repoRoot: URL, base: URL? = baseDirectory()) -> Int {
+        ioQueue.sync { generations[fileName(for: repoRoot), default: 0] }
+    }
+
     static func load(for repoRoot: URL, base: URL? = baseDirectory()) -> [Symbol]? {
-        guard let url = cacheURL(for: repoRoot, base: base),
-              let data = try? Data(contentsOf: url) else { return nil }
-        return decode(data)
+        ioQueue.sync {
+            guard let url = cacheURL(for: repoRoot, base: base),
+                  let data = try? Data(contentsOf: url) else { return nil }
+            return decode(data)
+        }
     }
 
     @discardableResult
     static func save(_ symbols: [Symbol], for repoRoot: URL, base: URL? = baseDirectory()) -> Bool {
+        ioQueue.sync { writeBaseLocked(symbols, for: repoRoot, base: base) }
+    }
+
+    /// Append `patches` to the repo's log as newline-terminated JSON lines. Plain append (not an
+    /// atomic full rewrite) — that's the whole point of the journal — and crash-safe: a torn final
+    /// line just fails to decode and is skipped by `loadPatches`. Pass `ifGeneration` to make the
+    /// write conditional: if a `compact` has advanced the repo's generation since it was captured,
+    /// the append is dropped (superseded by a full reindex) and returns false.
+    @discardableResult
+    static func appendPatches(_ patches: [Patch], for repoRoot: URL,
+                              base: URL? = baseDirectory(), ifGeneration: Int? = nil) -> Bool {
+        ioQueue.sync {
+            if let g = ifGeneration, g != generations[fileName(for: repoRoot), default: 0] {
+                return false   // superseded by a full reindex between scheduling and writing
+            }
+            return appendLocked(patches, for: repoRoot, base: base)
+        }
+    }
+
+    /// Read every well-formed patch line from the repo's log, in order. Missing log → empty.
+    /// Malformed lines (e.g. a torn trailing append) are skipped rather than aborting the load.
+    static func loadPatches(for repoRoot: URL, base: URL? = baseDirectory()) -> [Patch] {
+        ioQueue.sync {
+            guard let url = logURL(for: repoRoot, base: base),
+                  let data = try? Data(contentsOf: url) else { return [] }
+            return data.split(separator: 0x0A).compactMap { decodePatch(Data($0)) }
+        }
+    }
+
+    static func clearLog(for repoRoot: URL, base: URL? = baseDirectory()) {
+        ioQueue.sync { clearLogLocked(for: repoRoot, base: base) }
+    }
+
+    /// Rewrite the base snapshot from the authoritative in-memory `symbols` and clear the log — the
+    /// amortized full write that collapses the journal back into the base. Used by a full reindex
+    /// and when the log grows past the coalescing threshold. Base write + log clear happen as one
+    /// serialized unit, and the repo's generation is bumped so any concurrently-scheduled
+    /// incremental write (which captured the old generation) is dropped rather than applied on top.
+    /// Pass `ifGeneration` to also make the compaction itself conditional (used by the in-memory
+    /// incremental compaction, which must not clobber a fresher full reindex).
+    @discardableResult
+    static func compact(_ symbols: [Symbol], for repoRoot: URL,
+                        base: URL? = baseDirectory(), ifGeneration: Int? = nil) -> Bool {
+        ioQueue.sync {
+            let key = fileName(for: repoRoot)
+            if let g = ifGeneration, g != generations[key, default: 0] { return false }
+            generations[key, default: 0] += 1
+            guard writeBaseLocked(symbols, for: repoRoot, base: base) else { return false }
+            clearLogLocked(for: repoRoot, base: base)
+            return true
+        }
+    }
+
+    // MARK: Locked internals (call only while holding `ioQueue`)
+
+    private static func writeBaseLocked(_ symbols: [Symbol], for repoRoot: URL, base: URL?) -> Bool {
         guard let base, let url = cacheURL(for: repoRoot, base: base),
               let data = encode(symbols, repoPath: repoRoot.path) else { return false }
         do {
@@ -496,12 +592,7 @@ enum IndexCache {
         }
     }
 
-    /// Append `patches` to the repo's log as newline-terminated JSON lines. Plain append (not an
-    /// atomic full rewrite) — that's the whole point of the journal — and crash-safe: a torn final
-    /// line just fails to decode and is skipped by `loadPatches`. Returns false if nothing durable
-    /// happened (no base dir, encode failure, or IO error).
-    @discardableResult
-    static func appendPatches(_ patches: [Patch], for repoRoot: URL, base: URL? = baseDirectory()) -> Bool {
+    private static func appendLocked(_ patches: [Patch], for repoRoot: URL, base: URL?) -> Bool {
         guard !patches.isEmpty, let base, let url = logURL(for: repoRoot, base: base) else { return false }
         var blob = Data()
         for patch in patches {
@@ -512,13 +603,22 @@ enum IndexCache {
         guard !blob.isEmpty else { return false }
         do {
             try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-            if let handle = try? FileHandle(forWritingTo: url) {
+            // `forUpdating` (read+write) so we can inspect the last byte for a torn tail; a write-only
+            // handle can't be read. nil when the file doesn't exist yet → create it below.
+            if let handle = try? FileHandle(forUpdating: url) {
                 defer { try? handle.close() }
-                try handle.seekToEnd()
+                let end = try handle.seekToEnd()
+                // Guard against a torn final line from a previous crashed append: if the file doesn't
+                // end in a newline, insert one first so the partial record stays a separate (skipped)
+                // line instead of fusing onto — and corrupting — our first new record.
+                if end > 0 {
+                    try handle.seek(toOffset: end - 1)
+                    if try handle.read(upToCount: 1) != Data([0x0A]) { blob.insert(0x0A, at: 0) }
+                    try handle.seekToEnd()
+                }
                 try handle.write(contentsOf: blob)
             } else {
-                // No file yet → create it with the first batch.
-                try blob.write(to: url)
+                try blob.write(to: url)   // no file yet → create it with the first batch
             }
             return true
         } catch {
@@ -527,26 +627,8 @@ enum IndexCache {
         }
     }
 
-    /// Read every well-formed patch line from the repo's log, in order. Missing log → empty.
-    /// Malformed lines (e.g. a torn trailing append) are skipped rather than aborting the load.
-    static func loadPatches(for repoRoot: URL, base: URL? = baseDirectory()) -> [Patch] {
-        guard let url = logURL(for: repoRoot, base: base),
-              let data = try? Data(contentsOf: url) else { return [] }
-        return data.split(separator: 0x0A).compactMap { decodePatch(Data($0)) }
-    }
-
-    static func clearLog(for repoRoot: URL, base: URL? = baseDirectory()) {
+    private static func clearLogLocked(for repoRoot: URL, base: URL?) {
         guard let url = logURL(for: repoRoot, base: base) else { return }
         try? FileManager.default.removeItem(at: url)
-    }
-
-    /// Rewrite the base snapshot from the authoritative in-memory `symbols` and clear the log — the
-    /// amortized full write that collapses the journal back into the base. Used by a full reindex
-    /// and when the log grows past the coalescing threshold.
-    @discardableResult
-    static func compact(_ symbols: [Symbol], for repoRoot: URL, base: URL? = baseDirectory()) -> Bool {
-        let ok = save(symbols, for: repoRoot, base: base)
-        if ok { clearLog(for: repoRoot, base: base) }
-        return ok
     }
 }
