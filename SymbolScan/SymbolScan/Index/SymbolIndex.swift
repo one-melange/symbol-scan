@@ -70,13 +70,15 @@ class SymbolIndex: ObservableObject {
     /// All heavy work runs off the main thread, and switching repos never cancels another repo's
     /// in-flight job — so a long index keeps running while the user works elsewhere.
     func activateRepo(_ root: URL) {
-        flushBufferedPatches()   // persist anything still queued for the previously-active repo
+        // Persist + drain the previous repo's writes synchronously BEFORE switching, so switching
+        // back to it can't reload a stale base while an append is still in flight.
+        drainWritesSynchronously()
         indexedRepoRoot = root
         lastIndexError = nil
         symbols = []
         symbolCount = 0
         pendingChanges = []   // drop any changes queued for the previously-active repo
-        pendingPatches = []   // …and its unflushed patches (flushBufferedPatches wrote them)
+        pendingPatches = []   // …and its unflushed patches (drainWritesSynchronously persisted them)
         journaledPatchCount = 0
         publishEpoch += 1     // invalidate any in-flight incremental from the previous view
         isIndexing = jobs[root] != nil   // reflect an already-running background job for this repo
@@ -270,21 +272,23 @@ class SymbolIndex: ObservableObject {
         let batch = pendingPatches
         pendingPatches = []
         let willCompact = journaledPatchCount + batch.count > Self.maxJournalPatchesBeforeCompaction
-        // Compaction writes the whole in-memory array (which already includes every buffered patch,
-        // published before the patch was buffered), so it supersedes the batch rather than appending it.
-        let snapshot = willCompact ? symbols : nil
         // The generation this write is based on — if a full reindex compacts before it lands, the
         // write is dropped as superseded (its data is already reflected in that fresh base).
         let generation = IndexCache.generation(for: root)
 
-        Task.detached(priority: .utility) { [weak self] in
-            let wrote: Bool
-            if let snapshot {
-                wrote = IndexCache.compact(snapshot, for: root, ifGeneration: generation)
-            } else {
-                wrote = IndexCache.appendPatches(batch, for: root, ifGeneration: generation)
-            }
-            await self?.finishFlush(root: root, compacted: snapshot != nil && wrote, appended: wrote ? batch.count : 0)
+        // Enqueue the write SYNCHRONOUSLY on the serial IO queue (not via a detached Task, whose
+        // dispatch has a gap before it reaches the queue) so a repo-switch / termination
+        // `IndexCache.drain()` is a true barrier for it — an in-flight flush can't be lost or reordered.
+        let complete: @Sendable (Bool, Bool) -> Void = { [weak self] compacted, wrote in
+            Task.detached { await self?.finishFlush(root: root, compacted: compacted && wrote,
+                                                    appended: wrote ? batch.count : 0) }
+        }
+        if willCompact {
+            // Compaction writes the whole in-memory array (already includes every buffered patch),
+            // so it supersedes the batch rather than appending it.
+            IndexCache.enqueueCompact(symbols, for: root, ifGeneration: generation) { complete(true, $0) }
+        } else {
+            IndexCache.enqueueAppend(batch, for: root, ifGeneration: generation) { complete(false, $0) }
         }
     }
 
@@ -300,30 +304,28 @@ class SymbolIndex: ObservableObject {
         if let active = indexedRepoRoot, !pendingPatches.isEmpty { scheduleFlush(root: active) }
     }
 
-    /// Persist any buffered patches for the currently-active repo before switching away, off the main
-    /// actor. Append is safe even after the active repo changes — it targets `root`'s own log file,
-    /// and the generation guard drops it if a reindex of `root` compacts first.
-    private func flushBufferedPatches() {
+    /// Synchronously persist buffered patches for the active repo **and wait for any in-flight async
+    /// flush to finish**, so nothing is lost or reordered. Used before switching repos (so switching
+    /// back can't reload a stale base while an append is still pending) and at termination (a detached
+    /// write would not be awaited before exit). Blocks the caller briefly — the correct trade for
+    /// these infrequent, correctness-critical moments; the debounced steady-state flush stays async.
+    ///
+    /// Does NOT clear `flushing`: an in-flight flush's completion still hops to the main actor to run
+    /// `finishFlush` (which resets it and re-arms), and clearing it here would race that.
+    private func drainWritesSynchronously() {
         flushTask?.cancel()
         flushTask = nil
-        guard let root = indexedRepoRoot, !pendingPatches.isEmpty else { return }
-        let batch = pendingPatches
-        pendingPatches = []
-        let generation = IndexCache.generation(for: root)
-        Task.detached(priority: .utility) { IndexCache.appendPatches(batch, for: root, ifGeneration: generation) }
+        if let root = indexedRepoRoot, !pendingPatches.isEmpty {
+            let batch = pendingPatches
+            pendingPatches = []
+            IndexCache.appendPatches(batch, for: root, ifGeneration: IndexCache.generation(for: root))
+        }
+        IndexCache.drain()   // barrier: any write an in-flight flushNow enqueued has now landed
     }
 
     /// Flush buffered writes at app termination (see `AppDelegate.applicationWillTerminate`).
-    /// **Synchronous** on purpose: the process is exiting, so a detached task would not be awaited and
-    /// its writes would be lost — the very thing this hook exists to prevent. Blocking the main thread
-    /// for one small append at quit is the correct trade.
     func flushPendingWrites() {
-        flushTask?.cancel()
-        flushTask = nil
-        guard let root = indexedRepoRoot, !pendingPatches.isEmpty else { return }
-        let batch = pendingPatches
-        pendingPatches = []
-        IndexCache.appendPatches(batch, for: root, ifGeneration: IndexCache.generation(for: root))
+        drainWritesSynchronously()
     }
 
     // MARK: - Search
@@ -576,6 +578,42 @@ enum IndexCache {
             return true
         }
     }
+
+    /// Enqueue an append on the serial IO queue and deliver the result to `completion` (which runs on
+    /// that queue). Unlike a detached `Task`, the enqueue is **synchronous** — the work is on the
+    /// queue before this returns — so a later `drain()` is a true barrier for it, which is how
+    /// repo-switch and termination guarantee an in-flight flush is durable and ordered. `ifGeneration`
+    /// drops the write if a `compact` has advanced the repo's generation since it was captured.
+    static func enqueueAppend(_ patches: [Patch], for repoRoot: URL, base: URL? = baseDirectory(),
+                              ifGeneration: Int, completion: @escaping @Sendable (Bool) -> Void) {
+        ioQueue.async {
+            let wrote = ifGeneration == generations[fileName(for: repoRoot), default: 0]
+                && appendLocked(patches, for: repoRoot, base: base)
+            completion(wrote)
+        }
+    }
+
+    /// Compaction counterpart of `enqueueAppend` (bumps the generation, writes base, clears log).
+    static func enqueueCompact(_ symbols: [Symbol], for repoRoot: URL, base: URL? = baseDirectory(),
+                               ifGeneration: Int, completion: @escaping @Sendable (Bool) -> Void) {
+        ioQueue.async {
+            let key = fileName(for: repoRoot)
+            var wrote = false
+            if ifGeneration == generations[key, default: 0] {
+                generations[key, default: 0] += 1
+                if writeBaseLocked(symbols, for: repoRoot, base: base) {
+                    clearLogLocked(for: repoRoot, base: base)
+                    wrote = true
+                }
+            }
+            completion(wrote)
+        }
+    }
+
+    /// Barrier: block the caller until every write enqueued before this call has finished. Used at
+    /// repo-switch and termination to make in-flight async flushes durable and correctly ordered
+    /// before the repo can be reloaded (or the process exits).
+    static func drain() { ioQueue.sync {} }
 
     // MARK: Locked internals (call only while holding `ioQueue`)
 

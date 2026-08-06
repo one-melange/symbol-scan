@@ -180,6 +180,39 @@ import Foundation
         #expect(IndexCache.loadPatches(for: repo, base: base).count == 1)
     }
 
+    /// `drain()` is a true barrier: after it returns, a write enqueued (synchronously) before it is
+    /// durable. This is what makes the repo-switch / termination flush safe — an in-flight async
+    /// flush can't outlive the drain.
+    @Test func drainWaitsForAnEnqueuedAppend() {
+        let base = tempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let repo = URL(fileURLWithPath: "/tmp/drain/\(UUID().uuidString)")
+        let gen = IndexCache.generation(for: repo, base: base)
+
+        IndexCache.enqueueAppend([IndexCache.Patch(paths: ["A.swift"], symbols: [])],
+                                 for: repo, base: base, ifGeneration: gen) { _ in }
+        IndexCache.drain()   // must not return until the enqueued append has landed
+
+        #expect(IndexCache.loadPatches(for: repo, base: base).count == 1)
+    }
+
+    /// Serialized writes keep enqueue order: an async-enqueued append then a synchronous append land
+    /// in that order (no reordering of an in-flight write after a newer one).
+    @Test func enqueuedThenSyncWritePreserveOrder() {
+        let base = tempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let repo = URL(fileURLWithPath: "/tmp/order/\(UUID().uuidString)")
+        let gen = IndexCache.generation(for: repo, base: base)
+
+        IndexCache.enqueueAppend([IndexCache.Patch(paths: ["X.swift"], symbols: [])],
+                                 for: repo, base: base, ifGeneration: gen) { _ in }
+        IndexCache.appendPatches([IndexCache.Patch(paths: ["Y.swift"], symbols: [])],
+                                 for: repo, base: base, ifGeneration: gen)   // serial: after the enqueued one
+        IndexCache.drain()
+
+        #expect(IndexCache.loadPatches(for: repo, base: base).map(\.paths) == [["X.swift"], ["Y.swift"]])
+    }
+
     @Test func compactWritesBaseAndClearsLog() {
         let base = tempBase()
         defer { try? FileManager.default.removeItem(at: base) }
