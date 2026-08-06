@@ -98,10 +98,14 @@ class SymbolIndex: ObservableObject {
 
     /// Main-actor apply for `activateRepo`'s off-main cache probe.
     private func applyActivation(root: URL, cached: [Symbol]?, journaledPatches: Int, epoch: Int) {
-        // `indexedRepoRoot == root` alone isn't enough: a background full scan for this same repo can
-        // finish and publish (bumping `publishEpoch`) while our cache load is in flight — publishing
-        // the older cache snapshot on top would clobber the fresher scan. The epoch guard defers to it.
-        guard indexedRepoRoot == root, epoch == publishEpoch else { return }
+        // `indexedRepoRoot == root` alone isn't enough. Two ways a stale cache load must defer to an
+        // authoritative full scan started while it was in flight:
+        //   • the scan already finished and published → `publishEpoch` bumped (epoch guard);
+        //   • the scan is still running → `jobs[root] != nil`. Starting it doesn't bump the epoch, so
+        //     without this check the cache would publish and set `isIndexing = false` mid-scan.
+        // In the running case, dropping the cache result also skips the `else` branch's `startJob`,
+        // which is correct — the running job is the authoritative one.
+        guard indexedRepoRoot == root, epoch == publishEpoch, jobs[root] == nil else { return }
         if let cached {
             symbols = cached
             symbolCount = cached.count

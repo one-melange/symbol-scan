@@ -177,6 +177,30 @@ import Foundation
         #expect(replayed.map(key) == full.map(key))   // identical order + content
     }
 
+    /// A single `reindexFiles` call covering MULTIPLE changed files must land in the same canonical
+    /// order as a full scan. `reindexFiles` iterates a `Set`, so without `normalize`'s within-group
+    /// sort the code symbols would append in hash-dependent order and diverge from a full scan
+    /// (changing empty-query / equal-score ranking). The per-file linchpin test can't catch this.
+    @Test func multiFileBatchMatchesFullScanOrder() async throws {
+        let (root, cacheBase, existing) = try await seededRepo()
+        defer { cleanUp(root, cacheBase) }
+
+        // Deliberately non-alphabetical creation; spliced all at once in ONE batch.
+        try TestSupport.write("func alpha() {}", to: "z/Alpha.swift", in: root)
+        try TestSupport.write("func beta() {}",  to: "a/Beta.swift",  in: root)
+        try TestSupport.write("func gamma() {}", to: "m/Gamma.swift", in: root)
+
+        let batch: Set<String> = ["z/Alpha.swift", "a/Beta.swift", "m/Gamma.swift"]
+        let (spliced, _) = await Indexer.reindexFiles(batch, root: root, existing: existing)
+
+        let fresh = try TestSupport.makeTempDir(prefix: "ss-incr-multi-fresh")
+        defer { cleanUp(fresh) }
+        let full = try await Indexer.buildIndex(root: root, cacheBase: fresh).symbols
+
+        func key(_ s: Symbol) -> String { "\(s.name)|\(s.filePath)|\(s.kind.rawValue)|\(s.line)" }
+        #expect(spliced.map(key) == full.map(key))   // identical canonical order, not just same set
+    }
+
     /// An empty change set is a no-op: unchanged symbols, and a patch that names nothing (so the
     /// caller appends nothing).
     @Test func emptyChangeSetIsANoOp() async throws {

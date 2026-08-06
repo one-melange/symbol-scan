@@ -33,18 +33,30 @@ enum Indexer {
     ///
     /// - order: code symbols first, then `.file`, then `.directory` — so an exact-name symbol match
     ///   ranks ahead of a same-named file/dir;
+    /// - within each group the entries are **sorted** on a total key, so the result is independent of
+    ///   input order. This matters because `reindexFiles` iterates a `Set<String>` (hash order) and a
+    ///   multi-file batch would otherwise append symbols in a non-deterministic order that diverges
+    ///   from a full scan — changing empty-query and equal-score ranking, which is stable-sorted;
     /// - `.directory` entries are **derived** from the `.file` set (any incoming `.directory` is
     ///   dropped and rebuilt), so removed files never leave orphan dirs and a replayed log needs no
     ///   dir bookkeeping;
     /// - dedup on the `name|filePath|line` string key — `Symbol` hashes a fresh-per-init `id`, so a
     ///   `Set<Symbol>` would never collapse same-name/path/line duplicates.
     static func normalize(_ symbols: [Symbol]) -> [Symbol] {
+        // A total order over code symbols: by file, then line, then name, then kind — deterministic
+        // regardless of the order they were assembled/parsed in.
         let code = symbols.filter { $0.kind != .file && $0.kind != .directory }
-        let files = symbols.filter { $0.kind == .file }
+            .sorted { a, b in
+                if a.filePath != b.filePath { return a.filePath < b.filePath }
+                if a.line != b.line { return a.line < b.line }
+                if a.name != b.name { return a.name < b.name }
+                return a.kind.rawValue < b.kind.rawValue
+            }
+        let files = symbols.filter { $0.kind == .file }.sorted { $0.filePath < $1.filePath }
 
         var rebuilt = code
         rebuilt.append(contentsOf: files)
-        for dir in RepoScanner.directories(for: files.map(\.filePath)) {
+        for dir in RepoScanner.directories(for: files.map(\.filePath)).sorted() {
             let name = (dir as NSString).lastPathComponent
             rebuilt.append(Symbol(name: name, kind: .directory, filePath: dir, line: 0))
         }
