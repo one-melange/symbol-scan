@@ -153,7 +153,7 @@ import Foundation
         let (result, root, cacheBase) = try await build()
         defer { cleanUp(root, cacheBase) }
 
-        let loaded = try #require(await Indexer.loadCache(root: root, cacheBase: cacheBase))
+        let loaded = try #require(await Indexer.loadCache(root: root, cacheBase: cacheBase)).symbols
         #expect(loaded.count == result.symbols.count)
         #expect(loaded.map(\.name) == result.symbols.map(\.name))
 

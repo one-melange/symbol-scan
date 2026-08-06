@@ -67,4 +67,188 @@ import Foundation
         #expect(a != b)                                                             // distinct
         #expect(a.hasSuffix(".json"))
     }
+
+    // MARK: - Patch journal (T23)
+
+    private func tempBase() -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("ic-log-\(UUID().uuidString)")
+    }
+
+    @Test func patchEncodeDecodeRoundTrips() throws {
+        let patch = IndexCache.Patch(paths: ["A.swift", "gone.swift"], symbols: sampleSymbols())
+        let data = try #require(IndexCache.encodePatch(patch))
+        // One patch must serialize to a single line (the log is newline-delimited).
+        #expect(!data.contains(0x0A))
+        let decoded = try #require(IndexCache.decodePatch(data))
+        #expect(decoded.paths == patch.paths)
+        #expect(decoded.symbols.map(\.name) == patch.symbols.map(\.name))
+    }
+
+    @Test func appendThenLoadPatchesRoundTrips() {
+        let base = tempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let repo = URL(fileURLWithPath: "/tmp/some/repo")
+
+        let p1 = IndexCache.Patch(paths: ["A.swift"], symbols: [sampleSymbols()[0]])
+        let p2 = IndexCache.Patch(paths: ["B.swift"], symbols: [sampleSymbols()[1]])
+        #expect(IndexCache.appendPatches([p1], for: repo, base: base) == true)
+        #expect(IndexCache.appendPatches([p2], for: repo, base: base) == true)   // second append extends
+
+        let loaded = IndexCache.loadPatches(for: repo, base: base)
+        #expect(loaded.count == 2)
+        #expect(loaded[0].paths == ["A.swift"])   // order preserved
+        #expect(loaded[1].paths == ["B.swift"])
+    }
+
+    @Test func loadPatchesSkipsATornTrailingLine() throws {
+        let base = tempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let repo = URL(fileURLWithPath: "/tmp/some/repo")
+
+        IndexCache.appendPatches([IndexCache.Patch(paths: ["A.swift"], symbols: [])], for: repo, base: base)
+        // Simulate a crash mid-append: a partial JSON line with no trailing newline.
+        let url = try #require(IndexCache.logURL(for: repo, base: base))
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data(#"{"paths":["B.swift"],"sym"#.utf8))
+        try handle.close()
+
+        let loaded = IndexCache.loadPatches(for: repo, base: base)
+        #expect(loaded.count == 1)                 // the good record survives
+        #expect(loaded[0].paths == ["A.swift"])    // the torn one is dropped, not fatal
+    }
+
+    @Test func loadPatchesIsEmptyWhenNoLog() {
+        let base = tempBase()
+        #expect(IndexCache.loadPatches(for: URL(fileURLWithPath: "/tmp/nope"), base: base).isEmpty)
+    }
+
+    @Test func clearLogRemovesIt() {
+        let base = tempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let repo = URL(fileURLWithPath: "/tmp/some/repo")
+
+        IndexCache.appendPatches([IndexCache.Patch(paths: ["A.swift"], symbols: [])], for: repo, base: base)
+        #expect(!IndexCache.loadPatches(for: repo, base: base).isEmpty)
+        IndexCache.clearLog(for: repo, base: base)
+        #expect(IndexCache.loadPatches(for: repo, base: base).isEmpty)
+    }
+
+    /// A crash can leave a torn final line in the log. A later append must not fuse onto it and
+    /// corrupt its own first record — the torn fragment stays a separate (skipped) line.
+    @Test func appendAfterATornTailStaysReadable() throws {
+        let base = tempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let repo = URL(fileURLWithPath: "/tmp/some/repo")
+
+        IndexCache.appendPatches([IndexCache.Patch(paths: ["A.swift"], symbols: [])], for: repo, base: base)
+        // Simulate a crash mid-append: a partial record with no trailing newline.
+        let url = try #require(IndexCache.logURL(for: repo, base: base))
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data(#"{"paths":["B.swift"],"sym"#.utf8))
+        try handle.close()
+
+        IndexCache.appendPatches([IndexCache.Patch(paths: ["C.swift"], symbols: [])], for: repo, base: base)
+
+        let loaded = IndexCache.loadPatches(for: repo, base: base)
+        #expect(loaded.contains { $0.paths == ["A.swift"] })   // original survives
+        #expect(loaded.contains { $0.paths == ["C.swift"] })   // new record readable, not corrupted
+        #expect(!loaded.contains { $0.paths == ["B.swift"] })  // torn fragment still skipped
+    }
+
+    /// A `compact` bumps the repo's write generation; an append tagged with a pre-compact generation
+    /// is dropped as superseded, so a stale incremental write can't land on top of a full reindex.
+    @Test func compactSupersedesAStaleGenerationAppend() {
+        let base = tempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let repo = URL(fileURLWithPath: "/tmp/gen/\(UUID().uuidString)")
+
+        IndexCache.save([sampleSymbols()[0]], for: repo, base: base)
+        let stale = IndexCache.generation(for: repo, base: base)
+        IndexCache.compact(sampleSymbols(), for: repo, base: base)   // authoritative write bumps generation
+
+        let superseded = IndexCache.appendPatches([IndexCache.Patch(paths: ["late.swift"], symbols: [])],
+                                                  for: repo, base: base, ifGeneration: stale)
+        #expect(superseded == false)
+        #expect(IndexCache.loadPatches(for: repo, base: base).isEmpty)   // dropped, log stays clean
+
+        // A write at the current generation still applies.
+        let now = IndexCache.generation(for: repo, base: base)
+        #expect(IndexCache.appendPatches([IndexCache.Patch(paths: ["ok.swift"], symbols: [])],
+                                         for: repo, base: base, ifGeneration: now) == true)
+        #expect(IndexCache.loadPatches(for: repo, base: base).count == 1)
+    }
+
+    /// `drain()` is a true barrier: after it returns, a write enqueued (synchronously) before it is
+    /// durable. This is what makes the repo-switch / termination flush safe — an in-flight async
+    /// flush can't outlive the drain.
+    @Test func drainWaitsForAnEnqueuedAppend() {
+        let base = tempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let repo = URL(fileURLWithPath: "/tmp/drain/\(UUID().uuidString)")
+        let gen = IndexCache.generation(for: repo, base: base)
+
+        IndexCache.enqueueAppend([IndexCache.Patch(paths: ["A.swift"], symbols: [])],
+                                 for: repo, base: base, ifGeneration: gen) { _ in }
+        IndexCache.drain()   // must not return until the enqueued append has landed
+
+        #expect(IndexCache.loadPatches(for: repo, base: base).count == 1)
+    }
+
+    /// Serialized writes keep enqueue order: an async-enqueued append then a synchronous append land
+    /// in that order (no reordering of an in-flight write after a newer one).
+    @Test func enqueuedThenSyncWritePreserveOrder() {
+        let base = tempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let repo = URL(fileURLWithPath: "/tmp/order/\(UUID().uuidString)")
+        let gen = IndexCache.generation(for: repo, base: base)
+
+        IndexCache.enqueueAppend([IndexCache.Patch(paths: ["X.swift"], symbols: [])],
+                                 for: repo, base: base, ifGeneration: gen) { _ in }
+        IndexCache.appendPatches([IndexCache.Patch(paths: ["Y.swift"], symbols: [])],
+                                 for: repo, base: base, ifGeneration: gen)   // serial: after the enqueued one
+        IndexCache.drain()
+
+        #expect(IndexCache.loadPatches(for: repo, base: base).map(\.paths) == [["X.swift"], ["Y.swift"]])
+    }
+
+    /// `loadSnapshot` returns the base and its log paired from a single generation — never the new
+    /// base with a stale log, nor the old base with a cleared log. (One `ioQueue.sync` read; a
+    /// separate `load` + `loadPatches` could straddle a `compact`.)
+    @Test func loadSnapshotReflectsASingleGeneration() throws {
+        let base = tempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let repo = URL(fileURLWithPath: "/tmp/snap/\(UUID().uuidString)")
+
+        #expect(IndexCache.loadSnapshot(for: repo, base: base) == nil)   // no base → nil
+
+        IndexCache.save([sampleSymbols()[0]], for: repo, base: base)
+        IndexCache.appendPatches([IndexCache.Patch(paths: ["A.swift"], symbols: [])], for: repo, base: base)
+        let before = try #require(IndexCache.loadSnapshot(for: repo, base: base))
+        #expect(before.base.count == 1)
+        #expect(before.patches.count == 1)
+
+        IndexCache.compact(sampleSymbols(), for: repo, base: base)   // rewrites base + clears log
+        let after = try #require(IndexCache.loadSnapshot(for: repo, base: base))
+        #expect(after.base.count == sampleSymbols().count)
+        #expect(after.patches.isEmpty)
+    }
+
+    @Test func compactWritesBaseAndClearsLog() {
+        let base = tempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let repo = URL(fileURLWithPath: "/tmp/some/repo")
+
+        // Seed a base and a non-empty log.
+        IndexCache.save([sampleSymbols()[0]], for: repo, base: base)
+        IndexCache.appendPatches([IndexCache.Patch(paths: ["A.swift"], symbols: [])], for: repo, base: base)
+
+        #expect(IndexCache.compact(sampleSymbols(), for: repo, base: base) == true)
+        // Base now holds the compacted array…
+        let loadedBase = IndexCache.load(for: repo, base: base)
+        #expect(loadedBase?.map(\.name) == sampleSymbols().map(\.name))
+        // …and the log is gone.
+        #expect(IndexCache.loadPatches(for: repo, base: base).isEmpty)
+    }
 }
