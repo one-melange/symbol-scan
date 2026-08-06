@@ -213,6 +213,28 @@ import Foundation
         #expect(IndexCache.loadPatches(for: repo, base: base).map(\.paths) == [["X.swift"], ["Y.swift"]])
     }
 
+    /// `loadSnapshot` returns the base and its log paired from a single generation — never the new
+    /// base with a stale log, nor the old base with a cleared log. (One `ioQueue.sync` read; a
+    /// separate `load` + `loadPatches` could straddle a `compact`.)
+    @Test func loadSnapshotReflectsASingleGeneration() throws {
+        let base = tempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let repo = URL(fileURLWithPath: "/tmp/snap/\(UUID().uuidString)")
+
+        #expect(IndexCache.loadSnapshot(for: repo, base: base) == nil)   // no base → nil
+
+        IndexCache.save([sampleSymbols()[0]], for: repo, base: base)
+        IndexCache.appendPatches([IndexCache.Patch(paths: ["A.swift"], symbols: [])], for: repo, base: base)
+        let before = try #require(IndexCache.loadSnapshot(for: repo, base: base))
+        #expect(before.base.count == 1)
+        #expect(before.patches.count == 1)
+
+        IndexCache.compact(sampleSymbols(), for: repo, base: base)   // rewrites base + clears log
+        let after = try #require(IndexCache.loadSnapshot(for: repo, base: base))
+        #expect(after.base.count == sampleSymbols().count)
+        #expect(after.patches.isEmpty)
+    }
+
     @Test func compactWritesBaseAndClearsLog() {
         let base = tempBase()
         defer { try? FileManager.default.removeItem(at: base) }

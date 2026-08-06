@@ -112,14 +112,16 @@ enum Indexer {
 
     /// Load a persisted index off the main actor (JSON decode of a large cache can itself block).
     /// Reconstructs the current symbol set by replaying the patch log over the base snapshot, then
-    /// `normalize`s it so ranking matches a full scan. Returns nil when there's no valid base cache
-    /// for `root` (a missing base means the log — if any — can't be trusted). See `buildIndex` for
-    /// `cacheBase`.
-    static func loadCache(root: URL, cacheBase: URL? = IndexCache.baseDirectory()) async -> [Symbol]? {
-        guard let base = IndexCache.load(for: root, base: cacheBase) else { return nil }
-        let patches = IndexCache.loadPatches(for: root, base: cacheBase)
-        guard !patches.isEmpty else { return base }
-        return normalize(applyPatches(base: base, patches))
+    /// `normalize`s it so ranking matches a full scan. Base and log are read as **one atomic
+    /// snapshot** (`IndexCache.loadSnapshot`) so a concurrent `compact` can't yield a base and log
+    /// from different generations. Also returns the log's `patchCount` — from that same snapshot — so
+    /// the caller can seed its compaction counter without a second, separately-serialized read.
+    /// Returns nil when there's no valid base cache for `root` (a missing base means the log, if any,
+    /// can't be trusted). See `buildIndex` for `cacheBase`.
+    static func loadCache(root: URL, cacheBase: URL? = IndexCache.baseDirectory()) async -> (symbols: [Symbol], patchCount: Int)? {
+        guard let snap = IndexCache.loadSnapshot(for: root, base: cacheBase) else { return nil }
+        guard !snap.patches.isEmpty else { return (snap.base, 0) }
+        return (normalize(applyPatches(base: snap.base, snap.patches)), snap.patches.count)
     }
 
     /// Incremental reindex: re-parse only the `changed` files (repo-relative paths) and splice the

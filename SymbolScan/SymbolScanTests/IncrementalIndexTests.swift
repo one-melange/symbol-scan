@@ -141,7 +141,7 @@ import Foundation
         let (updated, patch) = await Indexer.reindexFiles(["New.swift"], root: root, existing: existing)
         IndexCache.appendPatches([patch], for: root, base: cacheBase)   // what SymbolIndex's flush does
 
-        let loaded = try #require(await Indexer.loadCache(root: root, cacheBase: cacheBase))
+        let loaded = try #require(await Indexer.loadCache(root: root, cacheBase: cacheBase)).symbols
         // Full equivalence: same entries in the same canonical order (not just the same name set).
         #expect(loaded.map { "\($0.name)|\($0.filePath)|\($0.kind.rawValue)" }
                 == updated.map { "\($0.name)|\($0.filePath)|\($0.kind.rawValue)" })
@@ -167,7 +167,7 @@ import Foundation
             IndexCache.appendPatches([patch], for: root, base: cacheBase)
         }
 
-        let replayed = try #require(await Indexer.loadCache(root: root, cacheBase: cacheBase))
+        let replayed = try #require(await Indexer.loadCache(root: root, cacheBase: cacheBase)).symbols
         // A fresh full scan of the same on-disk tree (writes a new base under a separate cache base).
         let fresh = try TestSupport.makeTempDir(prefix: "ss-incr-fresh")
         defer { cleanUp(fresh) }

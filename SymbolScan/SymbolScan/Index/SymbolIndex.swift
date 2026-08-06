@@ -81,23 +81,27 @@ class SymbolIndex: ObservableObject {
         pendingPatches = []   // …and its unflushed patches (drainWritesSynchronously persisted them)
         journaledPatchCount = 0
         publishEpoch += 1     // invalidate any in-flight incremental from the previous view
+        let epoch = publishEpoch
         isIndexing = jobs[root] != nil   // reflect an already-running background job for this repo
 
         // Load the on-disk cache OFF the main thread (a big cache's JSON decode can itself block),
         // then apply on the main actor. `Task.detached` guarantees the closure body runs with no
         // actor isolation — a plain `Task {}` here would inherit `@MainActor` and block the UI.
+        // `loadCache` returns the merged symbols and the log's patch count from one atomic snapshot,
+        // so the journal counter is seeded without a second, separately-serialized read.
         Task.detached(priority: .userInitiated) { [weak self] in
-            let cached = await Indexer.loadCache(root: root)
-            // Seed the journal counter from the log we just replayed, so compaction accounts for
-            // patches carried over from previous sessions rather than only this session's.
-            let patchCount = cached == nil ? 0 : IndexCache.loadPatches(for: root).count
-            await self?.applyActivation(root: root, cached: cached, journaledPatches: patchCount)
+            let loaded = await Indexer.loadCache(root: root)
+            await self?.applyActivation(root: root, cached: loaded?.symbols,
+                                        journaledPatches: loaded?.patchCount ?? 0, epoch: epoch)
         }
     }
 
     /// Main-actor apply for `activateRepo`'s off-main cache probe.
-    private func applyActivation(root: URL, cached: [Symbol]?, journaledPatches: Int) {
-        guard indexedRepoRoot == root else { return }   // superseded by a newer switch
+    private func applyActivation(root: URL, cached: [Symbol]?, journaledPatches: Int, epoch: Int) {
+        // `indexedRepoRoot == root` alone isn't enough: a background full scan for this same repo can
+        // finish and publish (bumping `publishEpoch`) while our cache load is in flight — publishing
+        // the older cache snapshot on top would clobber the fresher scan. The epoch guard defers to it.
+        guard indexedRepoRoot == root, epoch == publishEpoch else { return }
         if let cached {
             symbols = cached
             symbolCount = cached.count
@@ -548,10 +552,20 @@ enum IndexCache {
     /// Read every well-formed patch line from the repo's log, in order. Missing log → empty.
     /// Malformed lines (e.g. a torn trailing append) are skipped rather than aborting the load.
     static func loadPatches(for repoRoot: URL, base: URL? = baseDirectory()) -> [Patch] {
+        ioQueue.sync { loadPatchesLocked(for: repoRoot, base: base) }
+    }
+
+    /// Read the base snapshot **and** its patch log as one atomic operation. Doing both reads inside a
+    /// single `ioQueue.sync` is the point: a separate `load` + `loadPatches` can straddle an
+    /// authoritative `compact` (which rewrites the base and clears the log under the same queue),
+    /// yielding a base and a log from different generations — e.g. the old base with the freshly
+    /// emptied log. Returns nil when there's no base (a log without a base can't be trusted).
+    static func loadSnapshot(for repoRoot: URL, base: URL? = baseDirectory()) -> (base: [Symbol], patches: [Patch])? {
         ioQueue.sync {
-            guard let url = logURL(for: repoRoot, base: base),
-                  let data = try? Data(contentsOf: url) else { return [] }
-            return data.split(separator: 0x0A).compactMap { decodePatch(Data($0)) }
+            guard let url = cacheURL(for: repoRoot, base: base),
+                  let data = try? Data(contentsOf: url),
+                  let symbols = decode(data) else { return nil }
+            return (symbols, loadPatchesLocked(for: repoRoot, base: base))
         }
     }
 
@@ -668,5 +682,11 @@ enum IndexCache {
     private static func clearLogLocked(for repoRoot: URL, base: URL?) {
         guard let url = logURL(for: repoRoot, base: base) else { return }
         try? FileManager.default.removeItem(at: url)
+    }
+
+    private static func loadPatchesLocked(for repoRoot: URL, base: URL?) -> [Patch] {
+        guard let url = logURL(for: repoRoot, base: base),
+              let data = try? Data(contentsOf: url) else { return [] }
+        return data.split(separator: 0x0A).compactMap { decodePatch(Data($0)) }
     }
 }
