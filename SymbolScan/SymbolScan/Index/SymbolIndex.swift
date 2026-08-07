@@ -438,8 +438,10 @@ enum IndexCache {
     /// and skips symlinked dirs — pre-v5 caches can contain now-excluded entries (and the
     /// incremental writer must never patch a stale v4 array into an inconsistent mix). v6: the
     /// cache is now a base snapshot + append-only patch log (T23) — a pre-v6 base has no log, so
-    /// forcing a rescan on upgrade guarantees base and log start consistent.
-    static let version = 6
+    /// forcing a rescan on upgrade guarantees base and log start consistent. v7: symbols now carry
+    /// a `doc` field (leading doc comment / docstring) — pre-v7 caches have none, so rescan to
+    /// populate them.
+    static let version = 7
 
     private struct Payload: Codable {
         var version: Int
