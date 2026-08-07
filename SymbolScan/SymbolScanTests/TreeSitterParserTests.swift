@@ -251,6 +251,112 @@ import Testing
         #expect(go.first { $0.name == "Free" }?.signature == nil)   // plain func, no receiver
     }
 
+    // MARK: - Doc-comment extraction
+
+    private func doc(_ s: [Symbol], _ name: String) -> String? {
+        s.first { $0.name == name }?.doc
+    }
+
+    @Test func swiftLineDocComment() throws {
+        let s = try parse([
+            "/// Adds two numbers.",
+            "/// Returns the sum.",
+            "func add(a: Int, b: Int) -> Int { a + b }",
+        ], .swift)
+        #expect(doc(s, "add") == "Adds two numbers.\nReturns the sum.")
+    }
+
+    @Test func swiftBlockDocComment() throws {
+        let s = try parse([
+            "/**",
+            " * A greeter.",
+            " * Multiple lines.",
+            " */",
+            "class Greeter {}",
+        ], .swift)
+        #expect(doc(s, "Greeter") == "A greeter.\nMultiple lines.")
+    }
+
+    @Test func pythonDocstring() throws {
+        let s = try parse([
+            "def greet(name):",
+            "    \"\"\"Greets a person.",
+            "",
+            "    Extended description.",
+            "    \"\"\"",
+            "    return name",
+        ], .python)
+        #expect(doc(s, "greet") == "Greets a person.\n\nExtended description.")
+    }
+
+    @Test func rustDocCommentThroughAttribute() throws {
+        // A `#[derive(...)]` attribute sits between the `///` doc and the item; it must be skipped,
+        // not treated as the end of the doc block.
+        let s = try parse([
+            "/// A widget.",
+            "#[derive(Debug)]",
+            "struct Widget {",
+            "    x: i32,",
+            "}",
+        ], .rust)
+        #expect(doc(s, "Widget") == "A widget.")
+    }
+
+    @Test func goLineDocComment() throws {
+        let s = try parse([
+            "package main",
+            "",
+            "// Add returns the sum of a and b.",
+            "func Add(a, b int) int { return a + b }",
+            "",
+            "// Point is a 2D point.",
+            "type Point struct {",
+            "\tX int",
+            "}",
+        ], .go)
+        #expect(doc(s, "Add") == "Add returns the sum of a and b.")
+        #expect(doc(s, "Point") == "Point is a 2D point.")   // type doc via the type_declaration anchor
+    }
+
+    @Test func typeScriptJSDocAndArrowAndExport() throws {
+        let s = try parse([
+            "/** Adds two numbers. */",
+            "function add(a: number, b: number): number { return a + b; }",
+            "",
+            "// A handler.",
+            "const handle = () => {};",
+            "",
+            "/** Exported thing. */",
+            "export function pub(): void {}",
+        ], .typescript)
+        #expect(doc(s, "add") == "Adds two numbers.")
+        #expect(doc(s, "handle") == "A handler.")          // arrowfn anchors to the declaration
+        #expect(doc(s, "pub") == "Exported thing.")        // climbs past `export_statement`
+    }
+
+    @Test func javaScriptJSDoc() throws {
+        let s = try parse([
+            "/** Squares n. */",
+            "function square(n) { return n * n; }",
+        ], .javascript)
+        #expect(doc(s, "square") == "Squares n.")
+    }
+
+    @Test func blankLineBreaksDocAdjacency() throws {
+        // A comment separated from the declaration by a blank line is not its doc (godoc rule).
+        let s = try parse([
+            "/// File header, not a doc.",
+            "",
+            "func standalone() {}",
+        ], .swift)
+        #expect(doc(s, "standalone") == nil)
+    }
+
+    @Test func undocumentedSymbolHasNoDoc() throws {
+        let s = try parse(["func plain() {}"], .swift)
+        #expect(doc(s, "plain") == nil)
+    }
+
     // MARK: - Facade / grammar health
 
     /// Every dialect must produce a buildable grammar *and* a compilable query. `parse` returns nil

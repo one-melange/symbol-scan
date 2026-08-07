@@ -57,7 +57,8 @@ enum TreeSitterParser {
                     filePath: path,
                     line: Int(node.pointRange.lowerBound.row) + 1,  // tree-sitter rows are 0-based
                     signature: signature(forTag: tag, nameNode: node, name: name,
-                                         language: language, source: source)
+                                         language: language, source: source),
+                    doc: docComment(forTag: tag, nameNode: node, language: language, source: source)
                 ))
             }
         }
@@ -163,6 +164,184 @@ enum TreeSitterParser {
               let type = param.child(byFieldName: "type"),          // type_identifier | pointer_type
               let r = Range<String.Index>(type.range, in: source) else { return nil }
         return "(\(source[r])) \(name)"
+    }
+
+    // MARK: - Doc-comment extraction
+
+    /// Longest doc string we keep, to bound cache growth. Docs are collected but not yet surfaced,
+    /// so a generous cap is fine — it only trims runaway file-header essays.
+    private static let maxDocLength = 1_000
+
+    /// Leading documentation for a captured symbol: a Python **body docstring**, or — for every
+    /// other language — the *contiguous leading comment block* directly above the declaration (no
+    /// blank-line gap). Cleaned (markers stripped, dedented, trimmed) and length-capped. `nil` when
+    /// there is no adjacent doc. Pure and IO-free, like `signature`, so it's unit-testable.
+    private static func docComment(forTag tag: String, nameNode: Node,
+                                   language: Language, source: String) -> String? {
+        if language == .python {
+            return pythonDocstring(nameNode: nameNode, source: source)
+        }
+        return leadingCommentBlock(forTag: tag, nameNode: nameNode, language: language, source: source)
+    }
+
+    /// Python's docstring is not a comment but the first statement of the body when that statement
+    /// is a bare string literal (`function_definition`/`class_definition` → `body` block → first
+    /// named child).
+    private static func pythonDocstring(nameNode: Node, source: String) -> String? {
+        guard let body = nameNode.parent?.child(byFieldName: "body"),
+              let first = body.namedChild(at: 0) else { return nil }
+        let stringNode: Node
+        if first.nodeType == "expression_statement", let s = first.namedChild(at: 0), s.nodeType == "string" {
+            stringNode = s
+        } else if first.nodeType == "string" {
+            stringNode = first
+        } else {
+            return nil
+        }
+        guard let r = Range<String.Index>(stringNode.range, in: source) else { return nil }
+        let cleaned = cleanPythonDocstring(String(source[r]))
+        return cleaned.isEmpty ? nil : cleaned
+    }
+
+    /// Walk the preceding named siblings of the declaration's *anchor* node, collecting a contiguous
+    /// run of comment nodes. A blank line (row gap > 1) or any non-comment, non-prelude sibling ends
+    /// the block — the godoc adjacency rule, which keeps an unrelated file-header comment from being
+    /// attached to the first declaration below it.
+    private static func leadingCommentBlock(forTag tag: String, nameNode: Node,
+                                            language: Language, source: String) -> String? {
+        guard let anchor = docAnchor(forTag: tag, nameNode: nameNode, language: language) else { return nil }
+        let comments = commentNodeTypes(language)
+        let prelude = preludeNodeTypes(language)
+
+        var collected: [Node] = []
+        var nextStartRow = anchor.pointRange.lowerBound.row
+        var sibling = anchor.previousNamedSibling
+        while let node = sibling, let type = node.nodeType {
+            let contiguous = Int(nextStartRow) - Int(node.pointRange.upperBound.row) <= 1
+            if comments.contains(type) {
+                if !contiguous { break }
+                collected.append(node)
+                nextStartRow = node.pointRange.lowerBound.row
+            } else if prelude.contains(type) {
+                // e.g. a Rust `#[attr]` between the doc comment and the item — part of the decl
+                // prelude, so step over it (keeping the contiguity chain) rather than stopping.
+                if !contiguous { break }
+                nextStartRow = node.pointRange.lowerBound.row
+            } else {
+                break
+            }
+            sibling = node.previousNamedSibling
+        }
+        guard !collected.isEmpty else { return nil }
+
+        // `collected` is bottom-up; restore source order, then strip markers line-by-line.
+        var lines: [String] = []
+        for node in collected.reversed() {
+            guard let r = Range<String.Index>(node.range, in: source) else { continue }
+            lines.append(contentsOf: stripCommentMarkers(String(source[r])))
+        }
+        let cleaned = normalizeDoc(lines)
+        return cleaned.isEmpty ? nil : cleaned
+    }
+
+    /// The node whose preceding siblings hold the doc comment. Usually the declaration itself
+    /// (`nameNode.parent`), but a few captures are nested one level down, and TS/JS `export`-wrapped
+    /// declarations put the comment above the `export_statement`.
+    private static func docAnchor(forTag tag: String, nameNode: Node, language: Language) -> Node? {
+        guard var anchor = nameNode.parent else { return nil }
+        switch (language, tag) {
+        case (.go, "typespec"): anchor = anchor.parent ?? anchor   // type_spec -> type_declaration
+        case (_, "arrowfn"):    anchor = anchor.parent ?? anchor   // variable_declarator -> (lexical_)declaration
+        default: break
+        }
+        if language == .typescript || language == .tsx || language == .javascript {
+            while let p = anchor.parent, p.nodeType == "export_statement" { anchor = p }
+        }
+        return anchor
+    }
+
+    private static func commentNodeTypes(_ language: Language) -> Set<String> {
+        switch language {
+        case .swift: return ["comment", "multiline_comment"]
+        case .rust:  return ["line_comment", "block_comment"]
+        default:     return ["comment"]   // go, typescript, tsx, javascript
+        }
+    }
+
+    /// Sibling node types that sit *between* a doc comment and its declaration and should be skipped
+    /// without breaking the block. Only Rust outer attributes (`#[...]`) do this in practice.
+    private static func preludeNodeTypes(_ language: Language) -> Set<String> {
+        language == .rust ? ["attribute_item"] : []
+    }
+
+    /// Strip comment markers from one raw comment node's text, returning its cleaned line(s).
+    /// Handles `///`/`//!`/`//` line comments and `/** */`/`/* */` block comments (dropping a
+    /// leading `*` on interior block lines).
+    private static func stripCommentMarkers(_ raw: String) -> [String] {
+        // Trim newlines too: some grammars (e.g. tree-sitter-rust `line_comment`) include the
+        // comment's trailing "\n" in the node range.
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("/*") {
+            var body = trimmed
+            body.removeFirst(2)                              // "/*"
+            if body.hasPrefix("*") { body.removeFirst() }    // the extra "*" of a "/**" doc block
+            if body.hasSuffix("*/") { body.removeLast(2) }
+            return body.split(separator: "\n", omittingEmptySubsequences: false).map { line in
+                var l = String(line).trimmingCharacters(in: .whitespaces)
+                if l.hasPrefix("*") {
+                    l.removeFirst()
+                    if l.hasPrefix(" ") { l.removeFirst() }
+                }
+                return l
+            }
+        }
+        var l = trimmed
+        for marker in ["///", "//!", "//"] where l.hasPrefix(marker) {   // longest first
+            l.removeFirst(marker.count)
+            break
+        }
+        if l.hasPrefix(" ") { l.removeFirst() }
+        return [l]
+    }
+
+    /// Strip a Python string literal down to its content: drop an optional `r`/`b`/`u`/`f` prefix
+    /// and the surrounding `"""`/`'''`/`"`/`'` delimiters, then normalize.
+    private static func cleanPythonDocstring(_ raw: String) -> String {
+        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        while let f = s.first, "rbufRBUF".contains(f) { s.removeFirst() }
+        for quote in ["\"\"\"", "'''", "\"", "'"] where s.hasPrefix(quote) && s.hasSuffix(quote) && s.count >= 2 * quote.count {
+            s = String(s.dropFirst(quote.count).dropLast(quote.count))
+            break
+        }
+        return normalizeDoc(s.split(separator: "\n", omittingEmptySubsequences: false).map(String.init))
+    }
+
+    /// Shared cleanup for a doc's lines: strip trailing whitespace, drop leading/trailing blank
+    /// lines, dedent by the common leading indent (matters for Python docstrings), join, and cap.
+    private static func normalizeDoc(_ input: [String]) -> String {
+        var lines = input.map { $0.replacingOccurrences(of: "[ \\t]+$", with: "", options: .regularExpression) }
+        while let f = lines.first, f.isEmpty { lines.removeFirst() }
+        while let l = lines.last, l.isEmpty { lines.removeLast() }
+        guard !lines.isEmpty else { return "" }
+
+        // Dedent by the common indent of the lines *after* the first — PEP 257's rule, since a
+        // docstring's opening line sits right after `"""` with no indent while its body is indented.
+        // Comment blocks (all lines already at indent 0) are unaffected.
+        let bodyIndents = lines.enumerated()
+            .filter { $0.offset > 0 && !$0.element.isEmpty }
+            .map { $0.element.prefix { $0 == " " || $0 == "\t" }.count }
+        let minIndent = bodyIndents.min() ?? 0
+        if minIndent > 0 {
+            lines = lines.enumerated().map { i, l in
+                i == 0 || l.isEmpty ? l : String(l.dropFirst(min(minIndent, l.count)))
+            }
+        }
+
+        var result = lines.joined(separator: "\n")
+        if result.count > maxDocLength {
+            result = String(result.prefix(maxDocLength)) + "…"
+        }
+        return result
     }
 
     /// Go `type Foo <...>`: distinguish struct / interface / plain alias by the `type_spec`'s

@@ -9,14 +9,17 @@ struct Symbol: Identifiable, Hashable, Codable {
     let filePath: String       // relative to repo root
     let line: Int
     let signature: String?     // full function signature if available
+    let doc: String?           // leading doc comment / docstring, cleaned; nil if none
 
-    init(name: String, kind: SymbolKind, filePath: String, line: Int, signature: String? = nil) {
+    init(name: String, kind: SymbolKind, filePath: String, line: Int,
+         signature: String? = nil, doc: String? = nil) {
         self.id = UUID()
         self.name = name
         self.kind = kind
         self.filePath = filePath
         self.line = line
         self.signature = signature
+        self.doc = doc
     }
 
     var displayPath: String {

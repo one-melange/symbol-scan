@@ -8,7 +8,8 @@ import Foundation
         [
             Symbol(name: "SymbolIndex", kind: .class, filePath: "Index/SymbolIndex.swift", line: 5),
             Symbol(name: "activateRepo", kind: .method, filePath: "Index/SymbolIndex.swift", line: 30,
-                   signature: "func activateRepo(_ repoRoot: URL) async"),
+                   signature: "func activateRepo(_ repoRoot: URL) async",
+                   doc: "Point the index at a repo.\nRebuilds from cache when possible."),
         ]
     }
 
@@ -25,6 +26,8 @@ import Foundation
         #expect(decoded.map(\.filePath) == symbols.map(\.filePath))
         #expect(decoded.map(\.line) == symbols.map(\.line))
         #expect(decoded[1].signature == "func activateRepo(_ repoRoot: URL) async")
+        #expect(decoded[1].doc == "Point the index at a repo.\nRebuilds from cache when possible.")
+        #expect(decoded[0].doc == nil)   // absent doc survives as nil
     }
 
     @Test func decodeRejectsGarbage() {
