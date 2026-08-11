@@ -9,6 +9,7 @@ enum PickerAction {
     case dismiss     // close without selecting
     case chooseRepo  // open the directory picker to index a different repo
     case reindex     // rescan the active repo
+    case explain     // stream a local-LLM explanation of the selection (keeps the overlay open)
 }
 
 struct SymbolPickerView: View {
@@ -32,6 +33,9 @@ struct SymbolPickerView: View {
             searchBar
             Divider().opacity(0.3)
             resultsList
+            if vm.explanation != .idle {
+                explanationPane
+            }
             statusBar
         }
         .background(.ultraThinMaterial)
@@ -100,6 +104,57 @@ struct SymbolPickerView: View {
         }
     }
 
+    // MARK: - Explanation pane (⌘E)
+
+    /// The local-LLM explanation, shown below the results while `explanation != .idle`. Streams text
+    /// in as tokens arrive; caps its own height and scrolls so a long answer can't push the picker
+    /// off-screen (the controller also grows the window when this appears).
+    private var explanationPane: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Divider().opacity(0.3)
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Text(vm.selectedSymbol()?.name ?? "Explanation")
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if vm.explanation.isBusy {
+                    ProgressView().scaleEffect(0.5)
+                }
+            }
+
+            ScrollView(.vertical, showsIndicators: true) {
+                Text(explanationBody)
+                    .font(.system(size: 12))
+                    .foregroundStyle(explanationIsError ? Color.red : .primary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxHeight: 150)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    /// The text rendered in the pane for the current explanation state.
+    private var explanationBody: String {
+        switch vm.explanation {
+        case .idle:            return ""
+        case .loading:         return "Thinking…"
+        case .streaming(let s): return s
+        case .done(let s):     return s
+        case .failed(let m):   return m
+        }
+    }
+
+    private var explanationIsError: Bool {
+        if case .failed = vm.explanation { return true }
+        return false
+    }
+
     // MARK: - Status bar
 
     private var statusBar: some View {
@@ -118,6 +173,9 @@ struct SymbolPickerView: View {
                 .font(.system(size: 10))
                 .foregroundStyle(.quaternary)
             Text("⇥ copy")
+                .font(.system(size: 10))
+                .foregroundStyle(.quaternary)
+            Text("⌘E explain")
                 .font(.system(size: 10))
                 .foregroundStyle(.quaternary)
             Text("esc dismiss")

@@ -69,6 +69,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Watches the active repo and drives incremental reindex-on-save. Re-pointed whenever the
     /// active repo changes (there is exactly one active repo, so one watcher at a time).
     private var repoWatcher: RepoWatcher?
+    /// The local-LLM transport for the ⌘E "explain symbol" flow. Owns a lazily-spawned llama-server;
+    /// no process starts until the first explain, and it's torn down on quit.
+    private var llmClient: LlamaServerClient?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory) // No dock icon
@@ -87,7 +90,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // A restored/recent repo that turns out not to be a usable git repo forgets itself, so we
         // don't keep retrying a dead path every launch.
         index.onRepoInvalid = { url in RepoPreference.clear(url) }
-        let controller = OverlayWindowController(index: index)
+        let llm = LlamaServerClient()
+        llmClient = llm
+        let controller = OverlayWindowController(index: index, llmClient: llm)
         overlayWindowController = controller
         controller.onChooseRepo = { [weak self] in self?.chooseRepo() }
         controller.onReindex = { [weak self] in self?.reindex() }
@@ -206,6 +211,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// this just keeps the on-disk cache from lagging across a restart.
     func applicationWillTerminate(_ notification: Notification) {
         symbolIndex?.flushPendingWrites()
+        llmClient?.shutdown()   // terminate any running llama-server so it doesn't outlive the app
     }
 }
 
