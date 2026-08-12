@@ -137,6 +137,9 @@ actor LlamaServer {
     /// The production launcher: spawn `llama-server`, then health-poll until it's ready. Terminates
     /// the child on any failure or cancellation so a stalled/aborted start never orphans a process.
     static let realLaunch: Launcher = {
+        guard LLMRuntime.isSupported else {
+            throw LLMError.modelUnavailable(LLMRuntime.unsupportedMessage)
+        }
         guard let binary = LlamaServerLocator.binaryURL() else {
             throw LLMError.modelUnavailable("the model runtime isn't bundled with this build yet")
         }

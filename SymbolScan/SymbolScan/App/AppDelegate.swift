@@ -96,10 +96,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let llm = LlamaServerClient()
         llmClient = llm
         // Kick off the one-time model download in the background so it's usually ready before the
-        // first ⌘E (the turnkey bar). No-ops if the model is already on disk.
+        // first ⌘E (the turnkey bar). No-ops if the model is already on disk. Skipped on Intel — the
+        // bundled runtime is Apple-Silicon-only, so there's no point pulling a ~2 GB model there.
         let provisioner = ModelProvisioner()
         modelProvisioner = provisioner
-        provisioner.start()
+        if LLMRuntime.isSupported {
+            provisioner.start()
+        }
         let controller = OverlayWindowController(index: index, llmClient: llm, provisioner: provisioner)
         overlayWindowController = controller
         controller.onChooseRepo = { [weak self] in self?.chooseRepo() }

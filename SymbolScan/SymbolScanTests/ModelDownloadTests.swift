@@ -89,6 +89,30 @@ final class BlockingDownloader: ModelDownloading, @unchecked Sendable {
         for _ in 0..<200 where p.state != .downloading(0.42) { await Task.yield() }
         #expect(p.state == .downloading(0.42))
     }
+
+    @Test func validOverrideIsReadyWithoutDownloading() throws {
+        let dir = try TestSupport.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let override = dir.appendingPathComponent("my-model.gguf")
+        try Data("mine".utf8).write(to: override)
+        let dest = dir.appendingPathComponent("default.gguf")   // NOT present
+
+        // The default download destination is absent, but a valid override means we're ready — and
+        // FailingDownloader guarantees no download is attempted.
+        let p = ModelProvisioner(source: anyURL, destination: dest, expectedSHA256: nil,
+                                 modelPathOverride: override.path, downloader: FailingDownloader())
+        p.start()
+        #expect(p.state == .ready)
+    }
+
+    @Test func invalidOverrideFallsBackToDownload() async throws {
+        let dest = try nonexistentDestination()
+        let p = ModelProvisioner(source: anyURL, destination: dest, expectedSHA256: nil,
+                                 modelPathOverride: "/nope/does-not-exist.gguf",
+                                 downloader: SucceedingDownloader())
+        try await p.awaitReady()
+        #expect(p.state == .ready)   // override missing → fell back to the (fake) download
+    }
 }
 
 // MARK: - Downloader helpers

@@ -35,6 +35,25 @@ enum LLMError: LocalizedError, Sendable, Equatable {
     }
 }
 
+// MARK: - Runtime support
+
+/// Whether the ⌘E "explain" feature can run on this machine. The bundled `llama-server` + its
+/// Metal-accelerated dylibs are **Apple-Silicon-only** (the app itself stays universal so the core
+/// picker still runs on Intel; the release we vendor has no x86_64 build with Metal). On Intel the
+/// feature is cleanly unavailable with a message rather than a failed helper launch. `#if arch` is a
+/// compile-time-per-slice gate, so on a universal app each slice reports its own architecture.
+enum LLMRuntime {
+    nonisolated static var isSupported: Bool {
+        #if arch(arm64)
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    nonisolated static let unsupportedMessage = "⌘E explain requires an Apple Silicon Mac."
+}
+
 // MARK: - Client seam
 
 /// The transport seam between the picker and whatever runs the model. A picked symbol's prompt goes

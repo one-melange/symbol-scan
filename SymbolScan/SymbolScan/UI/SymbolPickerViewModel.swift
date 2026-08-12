@@ -111,6 +111,12 @@ final class SymbolPickerViewModel: ObservableObject {
     func explain() {
         guard let client = llmClient, let symbol = selectedSymbol() else { return }
         explainTask?.cancel()
+        // The bundled runtime is Apple-Silicon-only — fail clearly on Intel rather than spinning up
+        // (and downloading a model for) a helper that can't exec here.
+        guard LLMRuntime.isSupported else {
+            explanation = .failed(LLMRuntime.unsupportedMessage)
+            return
+        }
         explanation = .loading
         let prompt = PromptBuilder.build(for: symbol)
         // Runs on the view model's `@MainActor`, so each assignment publishes on the main thread; the

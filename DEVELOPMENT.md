@@ -50,8 +50,10 @@ With stable signing in place you grant Accessibility **once** and it survives re
 
 ### 3. Vendor the local-LLM runtime (for the ⌘E "explain" feature)
 
-The ⌘E "explain symbol" feature (T28) runs a bundled `llama-server`. It isn't checked into
-git (~23 MB of binaries), so fetch it once:
+The ⌘E "explain symbol" feature (T28) runs a bundled `llama-server`. **It is Apple-Silicon-only**
+— the vendored runtime is arm64 with Metal acceleration (the app itself stays universal, so the
+core picker still runs on Intel; on Intel ⌘E just reports the feature requires Apple Silicon). It
+isn't checked into git (~23 MB of binaries), so fetch it once:
 
 ```bash
 ./scripts/fetch-llama.sh

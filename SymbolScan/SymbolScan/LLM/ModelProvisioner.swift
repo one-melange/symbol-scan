@@ -20,17 +20,34 @@ final class ModelProvisioner: ObservableObject {
     private let source: URL
     private let destination: URL
     private let expectedSHA256: String?
+    /// A user-supplied model path taking precedence over the default download (mirrors
+    /// `LlamaServerLocator.modelURL()`). Captured at init. A **valid** override means the model is
+    /// already present, so no download is needed (and ⌘E works offline).
+    private let modelPathOverride: String?
     private let downloader: any ModelDownloading
     private var task: Task<Void, Never>?
 
     init(source: URL = ModelCatalog.sourceURL,
          destination: URL = LlamaServerLocator.defaultModelDirectory().appendingPathComponent(ModelCatalog.fileName),
          expectedSHA256: String? = ModelCatalog.sha256,
+         modelPathOverride: String? = LLMPreferences.modelPathOverride,
          downloader: any ModelDownloading = ModelDownloader()) {
         self.source = source
         self.destination = destination
         self.expectedSHA256 = expectedSHA256
+        self.modelPathOverride = modelPathOverride
         self.downloader = downloader
+    }
+
+    /// Is a usable model already on disk? A valid override wins (so we never download over a model the
+    /// user pointed us at); otherwise the default download destination. An override pointing at a
+    /// missing file falls back to the default (download).
+    private func modelIsPresent() -> Bool {
+        if let override = modelPathOverride, !override.isEmpty,
+           FileManager.default.fileExists(atPath: override) {
+            return true
+        }
+        return FileManager.default.fileExists(atPath: destination.path)
     }
 
     /// Idempotently ensure the model is present: already-downloaded → `.ready`; otherwise start one
@@ -43,7 +60,7 @@ final class ModelProvisioner: ObservableObject {
         case .unknown, .failed:
             break
         }
-        if FileManager.default.fileExists(atPath: destination.path) {
+        if modelIsPresent() {
             state = .ready
             return
         }
