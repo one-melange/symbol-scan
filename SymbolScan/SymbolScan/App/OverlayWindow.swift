@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Combine
 
 // MARK: - Window
 
@@ -35,6 +36,7 @@ class OverlayWindow: NSWindow {
             switch event.charactersIgnoringModifiers?.lowercased() {
             case "o": if onCommand?(.chooseRepo) == true { return true }
             case "r": if onCommand?(.reindex) == true { return true }
+            case "e": if onCommand?(.explain) == true { return true }
             case "q":
                 // The menu-bar icon can be hidden (full menu bar / notch), so the overlay must
                 // offer a quit path of its own.
@@ -56,7 +58,17 @@ class OverlayWindowController: NSWindowController {
     private static let focusHandbackDelay: TimeInterval = 0.12
 
     private let index: SymbolIndex
+    /// The local-LLM transport handed to each picker's view model (nil when the app was built/launched
+    /// without a model runtime — the ⌘E explain flow then no-ops).
+    private let llmClient: (any LLMClient)?
     private var hostingView: NSHostingView<SymbolPickerView>?
+
+    /// Overlay size while showing just the picker, and while an explanation pane is open. The window
+    /// grows to `expandedSize` so a streamed answer isn't clipped, and shrinks back when it clears.
+    private static let baseSize = NSSize(width: 520, height: 420)
+    private static let expandedSize = NSSize(width: 520, height: 600)
+    /// Live subscription to the current view model's explanation state, driving the resize.
+    private var explanationObserver: AnyCancellable?
 
     /// The app that was frontmost when the overlay appeared, so we can hand focus
     /// back to it before injecting the selected symbol.
@@ -72,8 +84,9 @@ class OverlayWindowController: NSWindowController {
     /// Invoked when the user asks to rescan the active repo (⌘R or the in-picker action).
     var onReindex: (() -> Void)?
 
-    init(index: SymbolIndex) {
+    init(index: SymbolIndex, llmClient: (any LLMClient)? = nil) {
         self.index = index
+        self.llmClient = llmClient
         let window = OverlayWindow()
         super.init(window: window)
 
@@ -83,6 +96,7 @@ class OverlayWindowController: NSWindowController {
             switch action {
             case .chooseRepo: self?.resolveAndRun { self?.onChooseRepo?() }; return true
             case .reindex:    self?.resolveAndRun { self?.onReindex?() };     return true
+            case .explain:    self?.viewModel?.explain();                     return true
             default:          return false
             }
         }
@@ -104,13 +118,19 @@ class OverlayWindowController: NSWindowController {
         // Must use `visibleFrame` (origin-aware, excludes menu bar/Dock) — the screen's global
         // origin is non-zero on secondary monitors, and ignoring it shoved the overlay
         // off to the side of external displays.
-        let frame = OverlayPlacement.frame(in: screen.visibleFrame,
-                                           size: NSSize(width: 520, height: 420))
+        let frame = OverlayPlacement.frame(in: screen.visibleFrame, size: Self.baseSize)
         window?.setFrame(frame, display: true)
 
-        let vm = SymbolPickerViewModel(index: index)
+        let vm = SymbolPickerViewModel(index: index, llmClient: llmClient)
         self.viewModel = vm
         self.currentMatch = match
+
+        // Grow the window while an explanation pane is open (and shrink back when it clears), keeping
+        // the overlay pinned to the top of the screen so a long streamed answer isn't clipped.
+        explanationObserver = vm.$explanation
+            .map { $0 != .idle }
+            .removeDuplicates()
+            .sink { [weak self] expanded in self?.resize(expanded: expanded) }
 
         let pickerView = SymbolPickerView(viewModel: vm) { [weak self] action in
             switch action {
@@ -119,6 +139,7 @@ class OverlayWindowController: NSWindowController {
             case .dismiss:    self?.confirmAndHide(inject: false, dismissOnly: true)
             case .chooseRepo: self?.resolveAndRun { self?.onChooseRepo?() }
             case .reindex:    self?.resolveAndRun { self?.onReindex?() }
+            case .explain:    self?.viewModel?.explain()
             }
         }
 
@@ -140,8 +161,22 @@ class OverlayWindowController: NSWindowController {
     }
 
     func hide() {
+        // Cancel any in-flight explanation before dropping the view model — releasing the last
+        // reference does NOT cancel its `explainTask`, so generation would otherwise keep running
+        // (and burning model resources) invisibly after the overlay closes.
+        explanationObserver = nil
+        viewModel?.resetExplanation()
         window?.orderOut(nil)
         viewModel = nil
+    }
+
+    /// Resize the overlay between the compact picker and the taller explanation layout, re-pinning it
+    /// to the top of the active screen (`OverlayPlacement` keeps the top edge fixed as height grows).
+    private func resize(expanded: Bool) {
+        guard let window, let screen = window.screen ?? NSScreen.main else { return }
+        let size = expanded ? Self.expandedSize : Self.baseSize
+        let frame = OverlayPlacement.frame(in: screen.visibleFrame, size: size)
+        window.setFrame(frame, display: true, animate: true)
     }
 
     /// Dismiss the overlay, then run `action` on the next runloop turn. Dismissing first (via the

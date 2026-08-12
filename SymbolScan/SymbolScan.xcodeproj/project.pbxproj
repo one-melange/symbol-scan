@@ -30,6 +30,9 @@
 		AA0600000000000000000021 /* Indexer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0600000000000000000020 /* Indexer.swift */; };
 		AA0600000000000000000031 /* IndexNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0600000000000000000030 /* IndexNotifier.swift */; };
 		AA0700000000000000000003 /* TreeSitterJavaScript in Frameworks */ = {isa = PBXBuildFile; productRef = AA0700000000000000000002 /* TreeSitterJavaScript */; };
+		AA0900000000000000000011 /* LLMCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0900000000000000000010 /* LLMCore.swift */; };
+		AA0900000000000000000021 /* OpenAIChatStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0900000000000000000020 /* OpenAIChatStream.swift */; };
+		AA0900000000000000000031 /* LlamaServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0900000000000000000030 /* LlamaServer.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -62,6 +65,9 @@
 		AA0600000000000000000030 /* IndexNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndexNotifier.swift; sourceTree = "<group>"; };
 		AA0800000000000000000001 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 		AA0800000000000000000002 /* Local.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text; path = Local.xcconfig.example; sourceTree = "<group>"; };
+		AA0900000000000000000010 /* LLMCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LLMCore.swift; sourceTree = "<group>"; };
+		AA0900000000000000000020 /* OpenAIChatStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIChatStream.swift; sourceTree = "<group>"; };
+		AA0900000000000000000030 /* LlamaServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LlamaServer.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -175,9 +181,20 @@
 				8EDE63282FE5B2FF0024E0D5 /* Index */,
 				8EDE632B2FE5B2FF0024E0D5 /* Input */,
 				8EDE632D2FE5B2FF0024E0D5 /* UI */,
+				AA0900000000000000000100 /* LLM */,
 				8EDE632E2FE5B2FF0024E0D5 /* Assets.xcassets */,
 			);
 			path = SymbolScan;
+			sourceTree = "<group>";
+		};
+		AA0900000000000000000100 /* LLM */ = {
+			isa = PBXGroup;
+			children = (
+				AA0900000000000000000010 /* LLMCore.swift */,
+				AA0900000000000000000020 /* OpenAIChatStream.swift */,
+				AA0900000000000000000030 /* LlamaServer.swift */,
+			);
+			path = LLM;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -324,6 +341,9 @@
 				8EDE633A2FE5B2FF0024E0D5 /* Symbol.swift in Sources */,
 				8EDE633B2FE5B2FF0024E0D5 /* SymbolPickerView.swift in Sources */,
 				8EDE63F12FE5B2FF0024E0D5 /* SymbolPickerViewModel.swift in Sources */,
+				AA0900000000000000000011 /* LLMCore.swift in Sources */,
+				AA0900000000000000000021 /* OpenAIChatStream.swift in Sources */,
+				AA0900000000000000000031 /* LlamaServer.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
