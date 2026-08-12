@@ -6,6 +6,7 @@ import Combine
 /// — `.streaming` while tokens are still arriving (spinner shown), `.done` once the stream ended.
 enum ExplanationState: Equatable {
     case idle
+    case preparing(String)   // one-time model provisioning (download) / warmup message
     case loading
     case streaming(String)
     case done(String)
@@ -19,10 +20,10 @@ enum ExplanationState: Equatable {
         }
     }
 
-    /// True while we're waiting on or receiving tokens — drives the pane's progress spinner.
+    /// True while we're preparing, waiting on, or receiving tokens — drives the pane's spinner.
     var isBusy: Bool {
         switch self {
-        case .loading, .streaming: return true
+        case .preparing, .loading, .streaming: return true
         default: return false
         }
     }
@@ -48,13 +49,20 @@ final class SymbolPickerViewModel: ObservableObject {
     /// that don't exercise the explain flow) — in which case `explain()` is a no-op.
     let llmClient: (any LLMClient)?
 
+    /// Provisions the model (first-run download). When present and not yet ready, `explain()` shows
+    /// download progress and streams once it's on disk. Nil in tests / when explain is inert.
+    let provisioner: ModelProvisioner?
+
     /// The in-flight explain task, cancelled when the selection changes or a new explain starts.
     /// Not private so tests (`@testable`) can `await explainTask?.value` for deterministic assertions.
     private(set) var explainTask: Task<Void, Never>?
 
-    init(index: SymbolIndex, llmClient: (any LLMClient)? = nil) {
+    init(index: SymbolIndex,
+         llmClient: (any LLMClient)? = nil,
+         provisioner: ModelProvisioner? = nil) {
         self.index = index
         self.llmClient = llmClient
+        self.provisioner = provisioner
         self.results = index.search("")
     }
 
@@ -106,23 +114,55 @@ final class SymbolPickerViewModel: ObservableObject {
         explanation = .loading
         let prompt = PromptBuilder.build(for: symbol)
         // Runs on the view model's `@MainActor`, so each assignment publishes on the main thread; the
-        // stream's token production happens off-main (see `OpenAIChatStream.stream`), we just consume.
+        // download + token production happen off-main, we just reflect them.
         explainTask = Task { [weak self] in
+            // 1) Make sure the model is on disk. On first run this may still be downloading — show
+            //    live progress rather than a spinner, so the one-time ~2 GB fetch is legible.
+            if let provisioner = self?.provisioner {
+                let ready = await self?.awaitModelReady(provisioner) ?? false
+                guard ready else { return }
+            }
+            guard let self, !Task.isCancelled else { return }
+
+            // 2) Stream the explanation.
+            self.explanation = .loading
             var buffer = ""
             do {
                 for try await token in client.explain(prompt) {
                     buffer += token
-                    self?.explanation = .streaming(buffer)
+                    self.explanation = .streaming(buffer)
                 }
-                guard let self, !Task.isCancelled else { return }
+                guard !Task.isCancelled else { return }
                 self.explanation = buffer.isEmpty
                     ? .failed("The model returned no output.")
                     : .done(buffer)
             } catch {
-                guard let self, !Task.isCancelled else { return }
+                guard !Task.isCancelled else { return }
                 let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
                 self.explanation = .failed(message)
             }
+        }
+    }
+
+    /// Drive the pane through model provisioning until the model is ready. Returns false (and sets a
+    /// terminal `.failed`) if the download failed or the task was cancelled, so the caller stops.
+    /// Reflects download progress into `.preparing(...)` by polling the provisioner's published state.
+    private func awaitModelReady(_ provisioner: ModelProvisioner) async -> Bool {
+        provisioner.start()
+        while true {
+            switch provisioner.state {
+            case .ready:
+                return true
+            case .failed(let message):
+                explanation = .failed(message)
+                return false
+            case .downloading(let fraction):
+                explanation = .preparing("Setting up the local model… \(Int((fraction * 100).rounded()))% (one time)")
+            case .unknown:
+                explanation = .preparing("Preparing the local model…")
+            }
+            do { try await Task.sleep(nanoseconds: 250_000_000) } catch { return false }
+            if Task.isCancelled { return false }
         }
     }
 

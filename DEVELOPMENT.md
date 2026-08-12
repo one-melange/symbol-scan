@@ -48,6 +48,25 @@ With stable signing in place you grant Accessibility **once** and it survives re
 > If you ran an ad-hoc build before signing was set up, remove the stale **SymbolScan**
 > entry from the Accessibility list (select it, click "−") and re-grant on the signed build.
 
+### 3. Vendor the local-LLM runtime (for the ⌘E "explain" feature)
+
+The ⌘E "explain symbol" feature (T28) runs a bundled `llama-server`. It isn't checked into
+git (~23 MB of binaries), so fetch it once:
+
+```bash
+./scripts/fetch-llama.sh
+```
+
+This downloads a **pinned** llama.cpp release (macOS arm64), verifies its checksum, and stages
+the runtime into `SymbolScan/Vendor/llama/` (git-ignored). The Xcode **"Bundle llama runtime"**
+build phase then copies it into `SymbolScan.app/Contents/Helpers/llama/` and re-signs it.
+
+- The app **builds and runs without this** — ⌘E just reports the runtime isn't bundled until
+  you run the script.
+- The **model** (~2 GB GGUF) is **not** vendored: the app downloads it on first launch into
+  `~/Library/Application Support/SymbolScan/models/` and shows progress in the menu bar and the
+  ⌘E pane. Nothing to do here.
+
 ---
 
 ## Daily workflow

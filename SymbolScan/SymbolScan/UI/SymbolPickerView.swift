@@ -142,11 +142,12 @@ struct SymbolPickerView: View {
     /// The text rendered in the pane for the current explanation state.
     private var explanationBody: String {
         switch vm.explanation {
-        case .idle:            return ""
-        case .loading:         return "Thinking…"
+        case .idle:             return ""
+        case .preparing(let m): return m
+        case .loading:          return "Thinking…"
         case .streaming(let s): return s
-        case .done(let s):     return s
-        case .failed(let m):   return m
+        case .done(let s):      return s
+        case .failed(let m):    return m
         }
     }
 
