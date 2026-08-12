@@ -43,6 +43,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DEST="${REPO_ROOT}/SymbolScan/Vendor/llama"
 
+# Idempotent: skip the download when the runtime is already staged (so install.sh can call this on
+# every build cheaply). Pass --force to refetch (e.g. to pick up a new pinned release).
+if [[ "${1:-}" != "--force" && -x "${DEST}/${BINARY}" ]]; then
+  echo "==> llama runtime already vendored at ${DEST#${REPO_ROOT}/} (use --force to refetch)"
+  exit 0
+fi
+
 echo "==> Fetching llama.cpp ${LLAMA_TAG} (macOS arm64)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT

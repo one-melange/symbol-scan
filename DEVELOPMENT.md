@@ -63,6 +63,9 @@ build phase then copies it into `SymbolScan.app/Contents/Helpers/llama/` and re-
 
 - The app **builds and runs without this** — ⌘E just reports the runtime isn't bundled until
   you run the script.
+- **`./scripts/install.sh` runs this for you** before its Release build, so an installed app
+  always has the runtime. You only need to run `fetch-llama.sh` by hand for **Xcode** (`Cmd+R`)
+  builds. It's idempotent (a no-op once staged; `--force` refetches).
 - The **model** (~2 GB GGUF) is **not** vendored: the app downloads it on first launch into
   `~/Library/Application Support/SymbolScan/models/` and shows progress in the menu bar and the
   ⌘E pane. Nothing to do here.

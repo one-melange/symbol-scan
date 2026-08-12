@@ -19,6 +19,13 @@ cd "$(dirname "$0")/.."
 PROJECT="SymbolScan/SymbolScan.xcodeproj"
 DEST="/Applications/SymbolScan.app"
 
+# Ensure the bundled llama.cpp runtime for the ⌘E "explain" feature (T28) is vendored *before* the
+# build — the "Bundle llama runtime" build phase copies it into the app. Idempotent: a no-op once
+# staged (pass --force to fetch-llama.sh to refetch). The model itself (~2 GB) is not vendored; the
+# installed app downloads it on first launch.
+echo "▸ Vendoring the local-LLM runtime…"
+./scripts/fetch-llama.sh
+
 echo "▸ Building SymbolScan (Release)…"
 xcodebuild \
   -project "$PROJECT" \
