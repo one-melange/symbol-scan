@@ -58,6 +58,13 @@ final class SymbolPickerViewModel: ObservableObject {
         self.results = index.search("")
     }
 
+    /// Final safety net: if the view model is torn down while an explanation is streaming (e.g. the
+    /// overlay is released), cancel the task so generation stops. `resetExplanation()` in the
+    /// controller's `hide()` is the primary, deterministic cancellation path.
+    deinit {
+        explainTask?.cancel()
+    }
+
     /// Apply a new search string and recompute results synchronously. Called from the
     /// search field's `controlTextDidChange`, so there's no need to defer through Combine.
     func updateQuery(_ newValue: String) {
@@ -70,7 +77,16 @@ final class SymbolPickerViewModel: ObservableObject {
 
     func moveSelection(_ delta: Int) {
         guard !results.isEmpty else { return }
-        selectedIndex = (selectedIndex + delta + results.count) % results.count
+        select((selectedIndex + delta + results.count) % results.count)
+    }
+
+    /// The single entry point for changing the selection — from arrow keys, mouse hover, or a tap.
+    /// Centralized so **every** selection change clears a stale explanation; hover used to set
+    /// `selectedIndex` directly, which left the pane showing one symbol's answer under another
+    /// symbol's heading. A no-op when the index is unchanged, so hovering the current row keeps it.
+    func select(_ index: Int) {
+        guard index != selectedIndex else { return }
+        selectedIndex = index
         resetExplanation()
     }
 

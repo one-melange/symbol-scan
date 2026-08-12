@@ -161,7 +161,11 @@ class OverlayWindowController: NSWindowController {
     }
 
     func hide() {
+        // Cancel any in-flight explanation before dropping the view model — releasing the last
+        // reference does NOT cancel its `explainTask`, so generation would otherwise keep running
+        // (and burning model resources) invisibly after the overlay closes.
         explanationObserver = nil
+        viewModel?.resetExplanation()
         window?.orderOut(nil)
         viewModel = nil
     }

@@ -91,8 +91,8 @@ struct SymbolPickerView: View {
                             SymbolRow(symbol: sym, isSelected: i == vm.selectedIndex)
                                 .id(i)
                                 .contentShape(Rectangle())
-                                .onTapGesture { vm.selectedIndex = i; onResolve(.inject) }
-                                .onHover { if $0 { vm.selectedIndex = i } }
+                                .onTapGesture { vm.select(i); onResolve(.inject) }
+                                .onHover { if $0 { vm.select(i) } }
                         }
                     }
                 }

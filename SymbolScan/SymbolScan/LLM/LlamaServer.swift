@@ -4,8 +4,8 @@ import Foundation
 
 /// Resolves where the `llama-server` binary and the GGUF model live. Pure path logic (Bundle +
 /// FileManager, no process), split out so it's inspectable and the server actor stays about
-/// lifecycle. `binaryURL()`/`modelURL()` return nil when the asset is absent, which the actor turns
-/// into a clear user-facing `LLMError`.
+/// lifecycle. `binaryURL()`/`modelURL()` return nil when the asset is absent, which the launcher
+/// turns into a clear user-facing `LLMError`.
 ///
 /// NOTE (T28 packaging): this build does not yet ship the binary or weights. The intended delivery is
 /// to bundle the small `llama-server` executable as an app resource (located here via `Bundle.main`,
@@ -38,27 +38,100 @@ enum LlamaServerLocator {
     }
 }
 
+// MARK: - Process handle abstraction
+
+/// A terminable, liveness-checkable server handle. Abstracted from `Process` so the lifecycle logic
+/// in `LlamaServer` (start coalescing, cancellation cleanup, shutdown) can be unit-tested with a fake
+/// handle — the reviewer's point that the real paths (delayed startup, cancellation, termination) go
+/// otherwise untested. `Sendable` so it can be stored across the actor and returned from a launcher.
+protocol LlamaProcessHandle: Sendable {
+    var isRunning: Bool { get }
+    /// Terminate the process and block until it has actually exited (so the port is freed and no child
+    /// outlives the app). Idempotent.
+    func terminate()
+}
+
+/// The real `Process`-backed handle. `@unchecked Sendable`: `Process` isn't `Sendable`, but every
+/// access here is confined to the owning actor / the launcher that created it, so there is no shared
+/// mutable access. `llama-server` exits cleanly on SIGTERM, so `terminate()` + `waitUntilExit()` is a
+/// bounded, orphan-free stop.
+final class LlamaProcessHandleImpl: LlamaProcessHandle, @unchecked Sendable {
+    private let process: Process
+    init(_ process: Process) { self.process = process }
+
+    nonisolated var isRunning: Bool { process.isRunning }
+
+    nonisolated func terminate() {
+        guard process.isRunning else { return }
+        process.terminate()        // SIGTERM — llama-server handles it and exits
+        process.waitUntilExit()    // wait so the child is truly gone before we return
+    }
+}
+
 // MARK: - Server process lifecycle
 
 /// Owns a long-lived `llama-server` child process. An `actor` because it guards mutable process
-/// state and its `ensureRunning()` is idempotent under concurrent explains. Reuses the deadlock-safe
-/// `Process` + `Pipe` handling proven in `RepoScanner` (drain the server's output so a chatty log
-/// never blocks it on a full pipe) — the difference is that this process is long-lived, not
-/// run-to-completion, so we health-poll `/health` instead of `waitUntilExit`.
+/// state. Reuses the deadlock-safe `Process` handling proven in `RepoScanner` (the launcher sinks the
+/// server's output so a chatty log never blocks it on a full pipe); the difference is that this
+/// process is long-lived, so we health-poll `/health` instead of `waitUntilExit`.
+///
+/// **Startup is coalesced.** Actors are re-entrant at every `await`, so a naive `ensureRunning()`
+/// that suspended inside a health check could be entered again and spawn a *second* server on the
+/// same port, orphaning the first. Instead the in-flight startup is memoized as a single `Task`;
+/// concurrent callers await that same task, so exactly one process is ever launched per start.
 actor LlamaServer {
-    private var process: Process?
-    private var baseURL: URL?
-    private let host = "127.0.0.1"
+    /// Spawns the server and returns once it's healthy. Must be cancellation-aware and must terminate
+    /// the process it spawned if it throws (including on cancellation), so a failed/aborted start
+    /// never leaks a child. Injectable so tests can drive startup timing without a real binary.
+    typealias Launcher = @Sendable () async throws -> (handle: any LlamaProcessHandle, url: URL)
 
-    /// Ensure a healthy server is running and return its base URL. Idempotent: if one is already up,
-    /// its URL is returned immediately. Throws a user-facing `LLMError` when the binary/model is
-    /// missing or the server never becomes ready.
+    private var running: (handle: any LlamaProcessHandle, url: URL)?
+    private var startup: Task<URL, Error>?
+    private let launch: Launcher
+
+    init(launch: @escaping Launcher = LlamaServer.realLaunch) {
+        self.launch = launch
+    }
+
+    /// Ensure a healthy server is running and return its base URL. Idempotent and concurrency-safe:
+    /// a live server short-circuits; an in-flight start is shared; only the first caller launches.
     func ensureRunning() async throws -> URL {
-        if let baseURL, let process, process.isRunning { return baseURL }
-        // A dead handle from a previous crash — clear it before respawning.
-        baseURL = nil
-        process = nil
+        if let running, running.handle.isRunning { return running.url }
+        running = nil                                     // drop a dead handle before (re)starting
 
+        if let startup { return try await startup.value } // coalesce onto the in-flight start
+
+        let task = Task<URL, Error> {
+            let (handle, url) = try await launch()
+            self.running = (handle, url)                  // actor-isolated: set before we resolve
+            return url
+        }
+        startup = task
+        do {
+            let url = try await task.value
+            startup = nil
+            return url
+        } catch {
+            startup = nil                                 // let the next caller retry a fresh start
+            throw error
+        }
+    }
+
+    /// Terminate the server and wait for it to exit. Cancels an in-flight start (whose launcher then
+    /// cleans up the half-spawned child) and terminates a running one. Safe when nothing is running.
+    func shutdown() async {
+        startup?.cancel()
+        if let startup { _ = try? await startup.value }   // let its cancellation cleanup complete
+        running?.handle.terminate()
+        running = nil
+        startup = nil
+    }
+
+    // MARK: Real launcher
+
+    /// The production launcher: spawn `llama-server`, then health-poll until it's ready. Terminates
+    /// the child on any failure or cancellation so a stalled/aborted start never orphans a process.
+    static let realLaunch: Launcher = {
         guard let binary = LlamaServerLocator.binaryURL() else {
             throw LLMError.modelUnavailable("the model runtime isn't bundled with this build yet")
         }
@@ -71,13 +144,12 @@ actor LlamaServer {
         proc.executableURL = binary
         proc.arguments = [
             "--model", model.path,
-            "--host", host,
+            "--host", "127.0.0.1",
             "--port", String(port),
             "--ctx-size", "4096",
         ]
-        // Discard the server's stdout/stderr, but keep draining it: an unread pipe fills its ~64KB
-        // buffer and blocks the writer — the same trap `RepoScanner` documents. `nullDevice` sinks it
-        // without a reader thread.
+        // Sink stdout/stderr so a chatty server never blocks on a full pipe (the trap `RepoScanner`
+        // documents); `nullDevice` drains it with no reader thread.
         proc.standardOutput = FileHandle.nullDevice
         proc.standardError = FileHandle.nullDevice
 
@@ -86,30 +158,30 @@ actor LlamaServer {
         } catch {
             throw LLMError.serverFailedToStart(error.localizedDescription)
         }
-        process = proc
 
-        let url = URL(string: "http://\(host):\(port)")!
-        try await waitUntilHealthy(url, process: proc)
-        baseURL = url
-        return url
+        let handle = LlamaProcessHandleImpl(proc)
+        let url = URL(string: "http://127.0.0.1:\(port)")!
+        do {
+            try await waitUntilHealthy(url, handle: handle)
+        } catch {
+            handle.terminate()   // failed OR cancelled start → never leave an orphan on the port
+            throw error
+        }
+        return (handle, url)
     }
 
-    /// Terminate the server (called on app quit). Safe to call when nothing is running.
-    func shutdown() {
-        process?.terminate()
-        process = nil
-        baseURL = nil
-    }
-
-    /// Poll `GET /health` until it returns 200, the process dies, or we time out.
-    private func waitUntilHealthy(_ base: URL, process: Process, timeout: TimeInterval = 30) async throws {
+    /// Poll `GET /health` until it returns 200, the process dies, or we time out. Cancellation-aware:
+    /// `checkCancellation()` + a throwing `sleep` propagate an aborted start immediately instead of
+    /// spinning to the deadline (the swallowed-`try?` bug), letting the launcher's cleanup run.
+    private static func waitUntilHealthy(_ base: URL, handle: any LlamaProcessHandle, timeout: TimeInterval = 30) async throws {
         let healthURL = base.appendingPathComponent("health")
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if !process.isRunning {
+            try Task.checkCancellation()
+            if !handle.isRunning {
                 throw LLMError.serverFailedToStart("the server exited on launch (check the model file and runtime)")
             }
-            try? await Task.sleep(nanoseconds: 300_000_000)   // 0.3s between probes
+            try await Task.sleep(nanoseconds: 300_000_000)   // throws on cancellation — intentional
             var req = URLRequest(url: healthURL)
             req.timeoutInterval = 2
             if let (_, resp) = try? await URLSession.shared.data(for: req),
@@ -117,7 +189,6 @@ actor LlamaServer {
                 return
             }
         }
-        process.terminate()
         throw LLMError.serverFailedToStart("timed out waiting for it to become ready")
     }
 }
@@ -161,8 +232,10 @@ final class LlamaServerClient: LLMClient {
         }
     }
 
-    /// Stop the underlying server. Fire-and-forget from `applicationWillTerminate`.
-    nonisolated func shutdown() {
-        Task { [server] in await server.shutdown() }
+    /// Stop the underlying server and wait for it to exit. `await`-ed from `applicationShouldTerminate`
+    /// so the child is gone before the app quits (a fire-and-forget `Task` during termination may
+    /// never be scheduled, orphaning a multi-GB process holding the port).
+    func shutdown() async {
+        await server.shutdown()
     }
 }

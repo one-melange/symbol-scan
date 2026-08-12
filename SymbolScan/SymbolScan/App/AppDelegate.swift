@@ -211,7 +211,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// this just keeps the on-disk cache from lagging across a restart.
     func applicationWillTerminate(_ notification: Notification) {
         symbolIndex?.flushPendingWrites()
-        llmClient?.shutdown()   // terminate any running llama-server so it doesn't outlive the app
+    }
+
+    /// Terminate any running `llama-server` **before** the process exits. `applicationWillTerminate`
+    /// is too late — it returns and the app can exit before an unstructured `Task` is ever scheduled,
+    /// orphaning a multi-GB child that keeps the port. So defer termination: return `.terminateLater`,
+    /// await the shutdown, then let AppKit proceed. When no client/server exists this is a no-op that
+    /// still resolves immediately.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let llm = llmClient else { return .terminateNow }
+        Task { @MainActor in
+            await llm.shutdown()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 }
 
