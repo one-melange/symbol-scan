@@ -230,6 +230,7 @@
 				8E3AEF832FE5A90E00A8E037 /* Sources */,
 				8E3AEF842FE5A90E00A8E037 /* Frameworks */,
 				8E3AEF852FE5A90E00A8E037 /* Resources */,
+				AA0A00000000000000000010 /* Bundle llama runtime */,
 			);
 			buildRules = (
 			);
@@ -314,6 +315,29 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+
+/* Begin PBXShellScriptBuildPhase section */
+		AA0A00000000000000000010 /* Bundle llama runtime */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Bundle llama runtime";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Bundle the vendored llama.cpp runtime (scripts/fetch-llama.sh) into the app for the Cmd-E \"explain\" feature (T28).\n# Absent vendor dir => warn and skip, so the app still builds (Cmd-E then reports the runtime isn't bundled).\nset -eu\nSRC=\"${SRCROOT}/Vendor/llama\"\nDEST=\"${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Helpers/llama\"\nif [ ! -d \"$SRC\" ] || [ -z \"$(ls -A \"$SRC\" 2>/dev/null)\" ]; then\n  echo \"warning: llama runtime not vendored at $SRC - run scripts/fetch-llama.sh to enable Cmd-E explain\"\n  exit 0\nfi\nmkdir -p \"$DEST\"\nrsync -a --delete \"$SRC/\" \"$DEST/\"\n# Sign nested code with the app's identity (inside-out) so it is valid within the signed app.\nif [ \"${CODE_SIGNING_ALLOWED:-NO}\" = \"YES\" ] && [ -n \"${EXPANDED_CODE_SIGN_IDENTITY:-}\" ]; then\n  find \"$DEST\" -type f \\( -name '*.dylib' -o -name 'llama-server' \\) -print0 | while IFS= read -r -d \"\" f; do\n    codesign --force --sign \"${EXPANDED_CODE_SIGN_IDENTITY}\" \"$f\"\n  done\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		8E11A7662FF2CDB100CA39BD /* Sources */ = {
@@ -535,6 +559,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -565,6 +590,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";

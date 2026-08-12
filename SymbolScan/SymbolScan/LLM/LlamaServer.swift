@@ -14,9 +14,14 @@ import Foundation
 /// then both lookups return nil and the picker shows "runtime isn't bundled / no model file".
 enum LlamaServerLocator {
 
-    /// The bundled server binary, or nil if this build shipped without it.
+    /// The bundled server binary, or nil if this build shipped without it. Lives under
+    /// `Contents/Helpers/llama/` alongside its dylibs (the "Bundle llama runtime" build phase stages
+    /// it there from `scripts/fetch-llama.sh`'s output). Co-location matters: `llama-server` resolves
+    /// its dylibs via `LC_RPATH=@loader_path`, i.e. its own directory.
     nonisolated static func binaryURL() -> URL? {
-        Bundle.main.url(forResource: "llama-server", withExtension: nil)
+        let u = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Helpers/llama/llama-server")
+        return FileManager.default.isExecutableFile(atPath: u.path) ? u : nil
     }
 
     /// `~/Library/Application Support/SymbolScan/models/` — where a downloaded model is kept.
