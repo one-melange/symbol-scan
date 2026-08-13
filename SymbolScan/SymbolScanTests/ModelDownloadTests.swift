@@ -136,6 +136,40 @@ final class BlockingDownloader: ModelDownloading, @unchecked Sendable {
     }
 }
 
+// MARK: - Shared model resolver (launch + provisioning)
+
+@Suite struct LlamaServerLocatorTests {
+    private func tempDir() throws -> URL { try TestSupport.makeTempDir() }
+
+    @Test func validOverrideWinsEvenWhenDefaultExists() throws {
+        let dir = try tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+        let override = dir.appendingPathComponent("override.gguf"); try Data("o".utf8).write(to: override)
+        let def = dir.appendingPathComponent("default.gguf"); try Data("d".utf8).write(to: def)
+        #expect(LlamaServerLocator.resolveModel(override: override.path, defaultModel: def)?.path == override.path)
+    }
+
+    @Test func missingOverrideFallsThroughToDefault() throws {
+        // The P2 bug: a stale/missing override must not shadow a present default (else launch returns
+        // nil after the default has downloaded, and ⌘E fails with "no model file found").
+        let dir = try tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+        let def = dir.appendingPathComponent("default.gguf"); try Data("d".utf8).write(to: def)
+        #expect(LlamaServerLocator.resolveModel(override: "/nope/missing.gguf", defaultModel: def)?.path == def.path)
+    }
+
+    @Test func nilAndEmptyOverrideUseDefault() throws {
+        let dir = try tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+        let def = dir.appendingPathComponent("default.gguf"); try Data("d".utf8).write(to: def)
+        #expect(LlamaServerLocator.resolveModel(override: nil, defaultModel: def)?.path == def.path)
+        #expect(LlamaServerLocator.resolveModel(override: "", defaultModel: def)?.path == def.path)
+    }
+
+    @Test func nilWhenNeitherExists() throws {
+        let dir = try tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+        let def = dir.appendingPathComponent("absent.gguf")   // not written
+        #expect(LlamaServerLocator.resolveModel(override: "/also/absent.gguf", defaultModel: def) == nil)
+    }
+}
+
 // MARK: - Menu-bar copy
 
 @MainActor @Suite struct ModelStatusCopyTests {

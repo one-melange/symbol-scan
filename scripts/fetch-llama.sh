@@ -14,6 +14,15 @@
 # requirement is that the dylibs sit next to the executable — no install_name_tool surgery.
 set -euo pipefail
 
+# The ⌘E explain runtime is Apple-Silicon-only (arm64 + Metal). Skip vendoring on Intel so the core
+# app can still build/install — otherwise the smoke test below would run the arm64 binary and fail
+# with "Bad CPU type", aborting the caller (e.g. install.sh). Uses the hardware capability flag, so a
+# Rosetta shell on an Apple Silicon Mac still vendors correctly.
+if [[ "$(sysctl -n hw.optional.arm64 2>/dev/null)" != "1" ]]; then
+  echo "==> Skipping: the ⌘E explain runtime is Apple-Silicon-only (this Mac isn't arm64)."
+  exit 0
+fi
+
 # --- Pinned release -----------------------------------------------------------------------------
 LLAMA_TAG="b10375"
 ASSET="llama-${LLAMA_TAG}-bin-macos-arm64.tar.gz"

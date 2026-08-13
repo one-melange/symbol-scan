@@ -39,15 +39,12 @@ final class ModelProvisioner: ObservableObject {
         self.downloader = downloader
     }
 
-    /// Is a usable model already on disk? A valid override wins (so we never download over a model the
-    /// user pointed us at); otherwise the default download destination. An override pointing at a
-    /// missing file falls back to the default (download).
+    /// Is a usable model already on disk? Delegates to the **shared** `LlamaServerLocator.resolveModel`
+    /// (a valid override wins; else the default destination), so provisioning and launch agree on what
+    /// counts — a missing override falls through to the default rather than forcing a download the
+    /// launch side then can't find.
     private func modelIsPresent() -> Bool {
-        if let override = modelPathOverride, !override.isEmpty,
-           FileManager.default.fileExists(atPath: override) {
-            return true
-        }
-        return FileManager.default.fileExists(atPath: destination.path)
+        LlamaServerLocator.resolveModel(override: modelPathOverride, defaultModel: destination) != nil
     }
 
     /// Idempotently ensure the model is present: already-downloaded → `.ready`; otherwise start one

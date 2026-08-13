@@ -31,15 +31,23 @@ enum LlamaServerLocator {
         return base.appendingPathComponent("SymbolScan/models", isDirectory: true)
     }
 
-    /// The resolved model file: the Preferences override if it exists, else the default file under
-    /// the model directory, else nil.
+    /// The resolved model file, honoring override-then-default precedence. Thin wrapper over
+    /// `resolveModel` so **launch and provisioning share one resolver** and never disagree about which
+    /// file counts.
     nonisolated static func modelURL() -> URL? {
-        if let override = LLMPreferences.modelPathOverride, !override.isEmpty {
-            let u = URL(fileURLWithPath: override)
-            return FileManager.default.fileExists(atPath: u.path) ? u : nil
+        resolveModel(override: LLMPreferences.modelPathOverride,
+                     defaultModel: defaultModelDirectory().appendingPathComponent(LLMPreferences.defaultModelFileName))
+    }
+
+    /// Pure resolution: a valid (existing) override wins; otherwise the default model if present;
+    /// otherwise nil. Crucially, a nonempty-but-**missing** override *falls through* to the default —
+    /// without this, launch returned nil for a stale override even after the default had downloaded,
+    /// so ⌘E failed with "no model file found" despite a ready model.
+    nonisolated static func resolveModel(override: String?, defaultModel: URL) -> URL? {
+        if let override, !override.isEmpty, FileManager.default.fileExists(atPath: override) {
+            return URL(fileURLWithPath: override)
         }
-        let u = defaultModelDirectory().appendingPathComponent(LLMPreferences.defaultModelFileName)
-        return FileManager.default.fileExists(atPath: u.path) ? u : nil
+        return FileManager.default.fileExists(atPath: defaultModel.path) ? defaultModel : nil
     }
 }
 
