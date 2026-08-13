@@ -61,7 +61,9 @@ isn't checked into git (~23 MB of binaries), so fetch it once:
 
 This downloads a **pinned** llama.cpp release (macOS arm64), verifies its checksum, and stages
 the runtime into `SymbolScan/Vendor/llama/` (git-ignored). The Xcode **"Bundle llama runtime"**
-build phase then copies it into `SymbolScan.app/Contents/Helpers/llama/` and re-signs it.
+build phase then copies the native runtime into `SymbolScan.app/Contents/Helpers/llama/`, copies
+llama.cpp's pinned MIT notice into `Contents/Resources/ThirdPartyLicenses/`, and re-signs the native
+binaries.
 
 - The app **builds and runs without this** — ⌘E just reports the runtime isn't bundled until
   you run the script.

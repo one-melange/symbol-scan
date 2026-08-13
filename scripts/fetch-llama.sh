@@ -28,6 +28,9 @@ LLAMA_TAG="b10375"
 ASSET="llama-${LLAMA_TAG}-bin-macos-arm64.tar.gz"
 URL="https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_TAG}/${ASSET}"
 EXPECTED_SHA256="ebbeed128cde32077c5b430feafe57ce20b1bca545f430ff142472014f03bcec"
+LICENSE_FILE="LICENSE.llama.cpp"
+LICENSE_URL="https://raw.githubusercontent.com/ggml-org/llama.cpp/${LLAMA_TAG}/LICENSE"
+EXPECTED_LICENSE_SHA256="94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d"
 
 # The executable + exactly its transitive @rpath closure (verified with otool). The release ships
 # these as symlinks to versioned real files; we copy the REAL files under the referenced ".0.dylib"
@@ -52,9 +55,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DEST="${REPO_ROOT}/SymbolScan/Vendor/llama"
 
-# Idempotent: skip the download when the runtime is already staged (so install.sh can call this on
-# every build cheaply). Pass --force to refetch (e.g. to pick up a new pinned release).
-if [[ "${1:-}" != "--force" && -x "${DEST}/${BINARY}" ]]; then
+# Idempotent: skip the download when the runtime and its required MIT license notice are already
+# staged (so install.sh can call this on every build cheaply). Pass --force to refetch (e.g. to pick
+# up a new pinned release). Requiring the notice here repairs older vendor directories that contain
+# only the binaries.
+if [[ "${1:-}" != "--force" && -x "${DEST}/${BINARY}" && -f "${DEST}/${LICENSE_FILE}" ]]; then
   echo "==> llama runtime already vendored at ${DEST#${REPO_ROOT}/} (use --force to refetch)"
   exit 0
 fi
@@ -64,13 +69,21 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 
 curl -fSL --retry 3 -o "${TMP}/${ASSET}" "${URL}"
+curl -fSL --retry 3 -o "${TMP}/${LICENSE_FILE}" "${LICENSE_URL}"
 
-echo "==> Verifying checksum"
+echo "==> Verifying checksums"
 ACTUAL_SHA256="$(shasum -a 256 "${TMP}/${ASSET}" | awk '{print $1}')"
 if [[ "${ACTUAL_SHA256}" != "${EXPECTED_SHA256}" ]]; then
   echo "ERROR: checksum mismatch for ${ASSET}" >&2
   echo "  expected: ${EXPECTED_SHA256}" >&2
   echo "  actual:   ${ACTUAL_SHA256}" >&2
+  exit 1
+fi
+ACTUAL_LICENSE_SHA256="$(shasum -a 256 "${TMP}/${LICENSE_FILE}" | awk '{print $1}')"
+if [[ "${ACTUAL_LICENSE_SHA256}" != "${EXPECTED_LICENSE_SHA256}" ]]; then
+  echo "ERROR: checksum mismatch for llama.cpp license notice" >&2
+  echo "  expected: ${EXPECTED_LICENSE_SHA256}" >&2
+  echo "  actual:   ${ACTUAL_LICENSE_SHA256}" >&2
   exit 1
 fi
 
@@ -87,6 +100,7 @@ mkdir -p "${DEST}"
 # referenced name.
 cp -L "${SRC}/${BINARY}" "${DEST}/${BINARY}"
 chmod +x "${DEST}/${BINARY}"
+cp "${TMP}/${LICENSE_FILE}" "${DEST}/${LICENSE_FILE}"
 for entry in "${DYLIBS[@]}"; do
   ref="$(echo "${entry}" | awk '{print $1}')"
   from="$(echo "${entry}" | awk '{print $2}')"
