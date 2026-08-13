@@ -153,3 +153,45 @@ struct BlockingLLMClient: LLMClient {
         #expect(vm.explanation == .done("done"))
     }
 }
+
+/// The explain flow gated on first-run model provisioning.
+@MainActor @Suite struct ExplainProvisioningTests {
+    private let anyURL = URL(string: "https://example.invalid/model.gguf")!
+
+    private func makeVM(client: any LLMClient, provisioner: ModelProvisioner) -> SymbolPickerViewModel {
+        let index = SymbolIndex()
+        index.loadForTesting([Symbol(name: "foo", kind: .function, filePath: "a.swift", line: 1)])
+        return SymbolPickerViewModel(index: index, llmClient: client, provisioner: provisioner)
+    }
+
+    @Test func readyModelStreamsNormally() async throws {
+        let dir = try TestSupport.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let dest = dir.appendingPathComponent("model.gguf")
+        try Data("present".utf8).write(to: dest)   // model already on disk → provisioner is ready
+
+        let provisioner = ModelProvisioner(source: anyURL, destination: dest, expectedSHA256: nil,
+                                           downloader: FailingDownloader())
+        let vm = makeVM(client: FakeLLMClient(tokens: ["ok"]), provisioner: provisioner)
+        vm.explain()
+        await vm.explainTask?.value
+        #expect(vm.explanation == .done("ok"))
+    }
+
+    @Test func showsPreparingWhileModelDownloads() async throws {
+        let dest = try TestSupport.makeTempDir().appendingPathComponent("model.gguf")   // not present
+        let provisioner = ModelProvisioner(source: anyURL, destination: dest, expectedSHA256: nil,
+                                           downloader: BlockingDownloader(reporting: 0.5))
+        let vm = makeVM(client: FakeLLMClient(tokens: ["never reached yet"]), provisioner: provisioner)
+        vm.explain()
+
+        var sawPreparing = false
+        for _ in 0..<400 {
+            if case .preparing = vm.explanation { sawPreparing = true; break }
+            await Task.yield()
+        }
+        #expect(sawPreparing)
+        vm.resetExplanation()               // stop the polling/generation task
+        await vm.explainTask?.value
+    }
+}

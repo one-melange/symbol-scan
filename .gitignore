@@ -69,3 +69,7 @@ build/
 # Local, machine-specific build overrides (signing team, etc.).
 # Copy SymbolScan/Local.xcconfig.example to SymbolScan/Local.xcconfig to create it.
 Local.xcconfig
+
+# Vendored llama.cpp runtime for the ⌘E "explain" feature (T28). ~23 MB of prebuilt binaries,
+# kept out of git and produced by scripts/fetch-llama.sh (pinned release + checksum).
+SymbolScan/Vendor/

@@ -72,6 +72,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// The local-LLM transport for the ⌘E "explain symbol" flow. Owns a lazily-spawned llama-server;
     /// no process starts until the first explain, and it's torn down on quit.
     private var llmClient: LlamaServerClient?
+    /// Provisions the model (first-run background download). Started on launch so it's usually ready
+    /// before the first ⌘E; observed by the picker + menu bar for progress.
+    private var modelProvisioner: ModelProvisioner?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory) // No dock icon
@@ -92,13 +95,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         index.onRepoInvalid = { url in RepoPreference.clear(url) }
         let llm = LlamaServerClient()
         llmClient = llm
-        let controller = OverlayWindowController(index: index, llmClient: llm)
+        // Kick off the one-time model download in the background so it's usually ready before the
+        // first ⌘E (the turnkey bar). No-ops if the model is already on disk. Skipped on Intel — the
+        // bundled runtime is Apple-Silicon-only, so there's no point pulling a ~2 GB model there.
+        let provisioner = ModelProvisioner()
+        modelProvisioner = provisioner
+        if LLMRuntime.isSupported {
+            provisioner.start()
+        }
+        let controller = OverlayWindowController(index: index, llmClient: llm, provisioner: provisioner)
         overlayWindowController = controller
         controller.onChooseRepo = { [weak self] in self?.chooseRepo() }
         controller.onReindex = { [weak self] in self?.reindex() }
 
         statusItem = StatusItemController(
             index: index,
+            provisioner: provisioner,
             onChooseRepo: { [weak self] in self?.chooseRepo() },
             onReindex: { [weak self] in self?.reindex() },
             onSwitch: { [weak self] url in self?.switchTo(url) },
@@ -236,6 +248,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 @MainActor
 final class StatusItemController: NSObject, NSMenuDelegate {
     private let index: SymbolIndex
+    private let provisioner: ModelProvisioner
     private let onChooseRepo: () -> Void
     private let onReindex: () -> Void
     private let onSwitch: (URL) -> Void
@@ -244,11 +257,13 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private var cancellables = Set<AnyCancellable>()
 
     init(index: SymbolIndex,
+         provisioner: ModelProvisioner,
          onChooseRepo: @escaping () -> Void,
          onReindex: @escaping () -> Void,
          onSwitch: @escaping (URL) -> Void,
          onOpenHotkeys: @escaping () -> Void) {
         self.index = index
+        self.provisioner = provisioner
         self.onChooseRepo = onChooseRepo
         self.onReindex = onReindex
         self.onSwitch = onSwitch
@@ -279,6 +294,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             .sink { [weak self] in self?.refreshStatusButton() }
             .store(in: &cancellables)
 
+        // Keep the tooltip's model-download line live as the background fetch progresses.
+        provisioner.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] in self?.refreshStatusButton() }
+            .store(in: &cancellables)
+
         // A full menu bar (e.g. behind a MacBook notch) makes macOS hide overflow items with no
         // API to force placement. Detect it and tell the user about the keyboard fallbacks.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
@@ -296,10 +317,14 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// hover without opening the menu. Tooltip-only on purpose: mutating the button *image* live
     /// forces a status-bar relayout that can re-enter layout (`_NSDetectedLayoutRecursion`).
     private func refreshStatusButton() {
-        statusItem.button?.toolTip = StatusMenuModel.title(repo: index.indexedRepoRoot,
-                                                           count: index.symbolCount,
-                                                           isIndexing: index.isIndexing,
-                                                           error: index.lastIndexError)
+        var tip = StatusMenuModel.title(repo: index.indexedRepoRoot,
+                                        count: index.symbolCount,
+                                        isIndexing: index.isIndexing,
+                                        error: index.lastIndexError)
+        if let modelLine = ModelStatusCopy.line(for: provisioner.state) {
+            tip += " · \(modelLine)"
+        }
+        statusItem.button?.toolTip = tip
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -313,6 +338,13 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             action: nil, keyEquivalent: "")
         header.isEnabled = false
         menu.addItem(header)
+
+        // Ambient model-download status (only while downloading or after a failure).
+        if let modelLine = ModelStatusCopy.line(for: provisioner.state) {
+            let modelItem = NSMenuItem(title: modelLine, action: nil, keyEquivalent: "")
+            modelItem.isEnabled = false
+            menu.addItem(modelItem)
+        }
         menu.addItem(.separator())
 
         let choose = NSMenuItem(title: "Choose Repo…", action: #selector(chooseRepo), keyEquivalent: "o")

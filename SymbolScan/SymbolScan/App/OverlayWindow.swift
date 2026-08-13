@@ -61,6 +61,8 @@ class OverlayWindowController: NSWindowController {
     /// The local-LLM transport handed to each picker's view model (nil when the app was built/launched
     /// without a model runtime — the ⌘E explain flow then no-ops).
     private let llmClient: (any LLMClient)?
+    /// Provisions the model (first-run download); handed to each view model so ⌘E can show progress.
+    private let provisioner: ModelProvisioner?
     private var hostingView: NSHostingView<SymbolPickerView>?
 
     /// Overlay size while showing just the picker, and while an explanation pane is open. The window
@@ -84,9 +86,12 @@ class OverlayWindowController: NSWindowController {
     /// Invoked when the user asks to rescan the active repo (⌘R or the in-picker action).
     var onReindex: (() -> Void)?
 
-    init(index: SymbolIndex, llmClient: (any LLMClient)? = nil) {
+    init(index: SymbolIndex,
+         llmClient: (any LLMClient)? = nil,
+         provisioner: ModelProvisioner? = nil) {
         self.index = index
         self.llmClient = llmClient
+        self.provisioner = provisioner
         let window = OverlayWindow()
         super.init(window: window)
 
@@ -121,7 +126,7 @@ class OverlayWindowController: NSWindowController {
         let frame = OverlayPlacement.frame(in: screen.visibleFrame, size: Self.baseSize)
         window?.setFrame(frame, display: true)
 
-        let vm = SymbolPickerViewModel(index: index, llmClient: llmClient)
+        let vm = SymbolPickerViewModel(index: index, llmClient: llmClient, provisioner: provisioner)
         self.viewModel = vm
         self.currentMatch = match
 

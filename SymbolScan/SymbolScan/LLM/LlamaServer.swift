@@ -14,9 +14,14 @@ import Foundation
 /// then both lookups return nil and the picker shows "runtime isn't bundled / no model file".
 enum LlamaServerLocator {
 
-    /// The bundled server binary, or nil if this build shipped without it.
+    /// The bundled server binary, or nil if this build shipped without it. Lives under
+    /// `Contents/Helpers/llama/` alongside its dylibs (the "Bundle llama runtime" build phase stages
+    /// it there from `scripts/fetch-llama.sh`'s output). Co-location matters: `llama-server` resolves
+    /// its dylibs via `LC_RPATH=@loader_path`, i.e. its own directory.
     nonisolated static func binaryURL() -> URL? {
-        Bundle.main.url(forResource: "llama-server", withExtension: nil)
+        let u = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Helpers/llama/llama-server")
+        return FileManager.default.isExecutableFile(atPath: u.path) ? u : nil
     }
 
     /// `~/Library/Application Support/SymbolScan/models/` — where a downloaded model is kept.
@@ -26,15 +31,23 @@ enum LlamaServerLocator {
         return base.appendingPathComponent("SymbolScan/models", isDirectory: true)
     }
 
-    /// The resolved model file: the Preferences override if it exists, else the default file under
-    /// the model directory, else nil.
+    /// The resolved model file, honoring override-then-default precedence. Thin wrapper over
+    /// `resolveModel` so **launch and provisioning share one resolver** and never disagree about which
+    /// file counts.
     nonisolated static func modelURL() -> URL? {
-        if let override = LLMPreferences.modelPathOverride, !override.isEmpty {
-            let u = URL(fileURLWithPath: override)
-            return FileManager.default.fileExists(atPath: u.path) ? u : nil
+        resolveModel(override: LLMPreferences.modelPathOverride,
+                     defaultModel: defaultModelDirectory().appendingPathComponent(LLMPreferences.defaultModelFileName))
+    }
+
+    /// Pure resolution: a valid (existing) override wins; otherwise the default model if present;
+    /// otherwise nil. Crucially, a nonempty-but-**missing** override *falls through* to the default —
+    /// without this, launch returned nil for a stale override even after the default had downloaded,
+    /// so ⌘E failed with "no model file found" despite a ready model.
+    nonisolated static func resolveModel(override: String?, defaultModel: URL) -> URL? {
+        if let override, !override.isEmpty, FileManager.default.fileExists(atPath: override) {
+            return URL(fileURLWithPath: override)
         }
-        let u = defaultModelDirectory().appendingPathComponent(LLMPreferences.defaultModelFileName)
-        return FileManager.default.fileExists(atPath: u.path) ? u : nil
+        return FileManager.default.fileExists(atPath: defaultModel.path) ? defaultModel : nil
     }
 }
 
@@ -132,6 +145,9 @@ actor LlamaServer {
     /// The production launcher: spawn `llama-server`, then health-poll until it's ready. Terminates
     /// the child on any failure or cancellation so a stalled/aborted start never orphans a process.
     static let realLaunch: Launcher = {
+        guard LLMRuntime.isSupported else {
+            throw LLMError.modelUnavailable(LLMRuntime.unsupportedMessage)
+        }
         guard let binary = LlamaServerLocator.binaryURL() else {
             throw LLMError.modelUnavailable("the model runtime isn't bundled with this build yet")
         }
