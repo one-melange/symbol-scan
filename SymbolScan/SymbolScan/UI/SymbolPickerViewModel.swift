@@ -57,6 +57,11 @@ final class SymbolPickerViewModel: ObservableObject {
     /// Not private so tests (`@testable`) can `await explainTask?.value` for deterministic assertions.
     private(set) var explainTask: Task<Void, Never>?
 
+    /// Keeps the current query bound to the active index snapshot. Repo switches and incremental
+    /// reindexes can replace every symbol without changing the query (or even the symbol count), so
+    /// query edits alone are not a sufficient trigger for recomputing the visible rows.
+    private var indexObserver: AnyCancellable?
+
     init(index: SymbolIndex,
          llmClient: (any LLMClient)? = nil,
          provisioner: ModelProvisioner? = nil) {
@@ -64,6 +69,11 @@ final class SymbolPickerViewModel: ObservableObject {
         self.llmClient = llmClient
         self.provisioner = provisioner
         self.results = index.search("")
+        self.indexObserver = index.$searchRevision
+            .dropFirst()
+            .sink { [weak self] _ in
+                self?.refreshResultsAfterIndexChange()
+            }
     }
 
     /// Final safety net: if the view model is torn down while an explanation is streaming (e.g. the
@@ -79,6 +89,15 @@ final class SymbolPickerViewModel: ObservableObject {
         guard newValue != query else { return }
         query = newValue
         results = index.search(newValue)
+        selectedIndex = 0
+        resetExplanation()
+    }
+
+    /// Reapply the existing text to a newly-published symbol snapshot. Keeping the query makes repo
+    /// comparison convenient; resetting selection/explanation prevents either from referring to a
+    /// row that belonged to the previous repo.
+    private func refreshResultsAfterIndexChange() {
+        results = index.search(query)
         selectedIndex = 0
         resetExplanation()
     }
