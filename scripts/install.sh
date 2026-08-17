@@ -49,7 +49,7 @@ if [[ -z "$PRODUCTS_DIR" || ! -d "$APP" ]]; then
   exit 1
 fi
 
-echo "▸ Installing to $DEST…"
+echo "▸ Installing to ${DEST}…"
 # Quit a running copy so the bundle isn't in use, then replace it in place.
 osascript -e 'quit app "SymbolScan"' >/dev/null 2>&1 || true
 rm -rf "$DEST"
