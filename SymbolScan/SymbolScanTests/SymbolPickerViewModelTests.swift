@@ -1,4 +1,5 @@
 import Testing
+import Foundation
 @testable import SymbolScan
 
 /// Drives the real view model + index through the picker flow (the logic behind the
@@ -36,6 +37,48 @@ import Testing
         vm.updateQuery("set")            // identical → dedup guard returns early
         #expect(vm.selectedIndex == 1)   // selection preserved
         #expect(vm.results.map(\.id) == before)
+    }
+
+    @Test func indexReplacementReappliesExistingQuery() {
+        let index = SymbolIndex()
+        let repoA = URL(fileURLWithPath: "/tmp/repo-a")
+        let repoB = URL(fileURLWithPath: "/tmp/repo-b")
+        index.loadForTesting([
+            Symbol(name: "injectAlpha", kind: .function, filePath: "A.swift", line: 1),
+            Symbol(name: "alphaOnly", kind: .function, filePath: "A.swift", line: 2),
+        ], repoRoot: repoA)
+        let vm = SymbolPickerViewModel(index: index)
+        vm.updateQuery("inject")
+        #expect(vm.results.map(\.name) == ["injectAlpha"])
+
+        // The replacement deliberately has the same count as repo A. Refresh must be driven by
+        // searchable content changing, not by a different symbol count.
+        index.loadForTesting([
+            Symbol(name: "injectBeta", kind: .function, filePath: "B.swift", line: 1),
+            Symbol(name: "betaOnly", kind: .function, filePath: "B.swift", line: 2),
+        ], repoRoot: repoB)
+
+        #expect(vm.query == "inject")
+        #expect(vm.results.map(\.name) == ["injectBeta"])
+        #expect(vm.selectedIndex == 0)
+    }
+
+    @Test func indexReplacementClearsMatchesMissingFromNewRepo() {
+        let index = SymbolIndex()
+        index.loadForTesting([
+            Symbol(name: "inject", kind: .function, filePath: "A.swift", line: 1)
+        ])
+        let vm = SymbolPickerViewModel(index: index)
+        vm.updateQuery("inject")
+        #expect(!vm.results.isEmpty)
+
+        index.loadForTesting([
+            Symbol(name: "unrelated", kind: .function, filePath: "B.swift", line: 1)
+        ])
+
+        #expect(vm.query == "inject")
+        #expect(vm.results.isEmpty)
+        #expect(vm.selectedSymbol() == nil)
     }
 
     @Test func moveSelectionWrapsBothDirections() {

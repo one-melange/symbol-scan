@@ -9,6 +9,10 @@ class SymbolIndex: ObservableObject {
     @Published var isIndexing: Bool = false
     @Published var indexedRepoRoot: URL?
     @Published private(set) var symbolCount: Int = 0
+    /// Monotonically advances after the searchable symbol set has been replaced. The picker observes
+    /// this instead of `symbolCount`: two repos can contain the same number of symbols while having
+    /// completely different matches, and a count-only refresh would leave stale rows on screen.
+    @Published private(set) var searchRevision: UInt = 0
     /// User-facing reason the last activation/reindex produced no index (nil = fine). Surfaced in
     /// the picker's empty state and the menu-bar header.
     @Published var lastIndexError: String?
@@ -75,8 +79,7 @@ class SymbolIndex: ObservableObject {
         drainWritesSynchronously()
         indexedRepoRoot = root
         lastIndexError = nil
-        symbols = []
-        symbolCount = 0
+        replaceSymbols(with: [])
         pendingChanges = []   // drop any changes queued for the previously-active repo
         pendingPatches = []   // …and its unflushed patches (drainWritesSynchronously persisted them)
         journaledPatchCount = 0
@@ -107,8 +110,7 @@ class SymbolIndex: ObservableObject {
         // which is correct — the running job is the authoritative one.
         guard indexedRepoRoot == root, epoch == publishEpoch, jobs[root] == nil else { return }
         if let cached {
-            symbols = cached
-            symbolCount = cached.count
+            replaceSymbols(with: cached)
             journaledPatchCount = journaledPatches
             isIndexing = false
             publishEpoch += 1
@@ -169,8 +171,7 @@ class SymbolIndex: ObservableObject {
         case .success(let result):
             jobs[root] = nil
             if root == indexedRepoRoot {
-                symbols = result.symbols
-                symbolCount = result.symbols.count
+                replaceSymbols(with: result.symbols)
                 isIndexing = false
                 lastIndexError = nil
                 publishEpoch += 1
@@ -244,8 +245,7 @@ class SymbolIndex: ObservableObject {
         // snapshotted (epoch bumped), leaving that authoritative result in place — and drop the
         // patch too, since that authoritative base already reflects (or will reflect) the change.
         if root == indexedRepoRoot, jobs[root] == nil, epoch == publishEpoch {
-            symbols = updated
-            symbolCount = updated.count
+            replaceSymbols(with: updated)
             if !patch.paths.isEmpty {
                 pendingPatches.append(patch)
                 scheduleFlush(root: root)
@@ -338,6 +338,14 @@ class SymbolIndex: ObservableObject {
 
     // MARK: - Search
 
+    /// Publish a new searchable snapshot atomically from the picker's perspective. `searchRevision`
+    /// changes last, after both the backing array and its metadata are ready to be queried.
+    private func replaceSymbols(with newSymbols: [Symbol]) {
+        symbols = newSymbols
+        symbolCount = newSymbols.count
+        searchRevision &+= 1
+    }
+
     /// Strict-substring symbol search — returns the top `SymbolMatcher.defaultResultLimit` results
     /// ranked by score. Ranking/matching lives in `SymbolMatcher` so it can be unit-tested in isolation.
     func search(_ query: String) -> [Symbol] {
@@ -353,9 +361,8 @@ class SymbolIndex: ObservableObject {
     /// Seed a known symbol set for tests, bypassing git/async indexing. Pass `repoRoot` to also
     /// drive UI state that keys off `indexedRepoRoot`.
     func loadForTesting(_ symbols: [Symbol], repoRoot: URL? = nil) {
-        self.symbols = symbols
-        self.symbolCount = symbols.count
         self.indexedRepoRoot = repoRoot
+        replaceSymbols(with: symbols)
     }
     #endif
 }
