@@ -234,16 +234,16 @@ nonisolated final class WorkspaceContextDetector {
             let candidates = provider.candidates(from: snapshot, knownRoots: knownRoots)
             let root = RepoCandidateResolver.resolve(candidates, knownRoots: knownRoots)
             let elapsedMS = Int((CFAbsoluteTimeGetCurrent() - started) * 1_000)
+            let evidence = provider.evidenceNodeIndices(in: snapshot, knownRoots: knownRoots)
             if trace || root != nil {
-                Log.context.debug("Codex project probe: \(snapshot.nodes.count) nodes, \(elapsedMS)ms, matched=\(root != nil, privacy: .public)")
+                Log.context.debug("Codex selector probe: inspected \(snapshot.nodes.count) AX nodes (cap 180) for the upper-left project/folder control; evidence=\(evidence.count), candidates=\(candidates.count), elapsed=\(elapsedMS)ms, resolved=\(root?.path ?? "<none>", privacy: .public)")
             }
             completion(root)
 #if DEBUG
             if trace {
                 WorkspaceContextDebugTrace.dump(app: app, snapshot: snapshot,
-                                                evidence: provider.evidenceNodeIndices(
-                                                    in: snapshot, knownRoots: knownRoots),
-                                                candidates: candidates, resolvedRoot: root,
+                                                evidence: evidence, candidates: candidates,
+                                                knownRoots: knownRoots, resolvedRoot: root,
                                                 elapsedMS: elapsedMS)
             }
 #endif
@@ -255,20 +255,57 @@ nonisolated final class WorkspaceContextDetector {
 nonisolated private enum WorkspaceContextDebugTrace {
     static func dump(app: RunningAppIdentity, snapshot: AccessibilitySnapshot,
                      evidence: [Int], candidates: [WorkspaceCandidate],
-                     resolvedRoot: URL?, elapsedMS: Int) {
-        Log.context.notice("===== SymbolScan CODEX PROJECT TRACE app=\(app.bundleIdentifier, privacy: .public) visited=\(snapshot.nodes.count, privacy: .public) evidence=\(evidence.count, privacy: .public) elapsed=\(elapsedMS, privacy: .public)ms =====")
+                     knownRoots: [URL], resolvedRoot: URL?, elapsedMS: Int) {
+        Log.context.notice("===== SymbolScan CODEX PROJECT TRACE app=\(app.bundleIdentifier, privacy: .public) visited=\(snapshot.nodes.count, privacy: .public)/180 elapsed=\(elapsedMS, privacy: .public)ms =====")
+        Log.context.notice("SymbolScan CODEX PROJECT TARGET: upper-left project/folder selector. Anchor rule: AXIdentifier/AXDOMIdentifier/AXTitle/AXDescription/AXHelp/AXRoleDescription contains project, workspace, repository, working folder, project folder, or open folder. A button whose label exactly matches a known repo name is also accepted.")
+        if knownRoots.isEmpty {
+            Log.context.notice("SymbolScan CODEX PROJECT KNOWN REPOS: <none>")
+        } else {
+            for root in knownRoots {
+                Log.context.notice("SymbolScan CODEX PROJECT KNOWN REPO name=\(quoted(root.lastPathComponent), privacy: .public) path=\(quoted(root.path), privacy: .public)")
+            }
+        }
+        if evidence.isEmpty {
+            Log.context.notice("SymbolScan CODEX PROJECT SELECTOR EVIDENCE: <none>")
+        } else {
+            Log.context.notice("SymbolScan CODEX PROJECT SELECTOR EVIDENCE: \(evidence.count, privacy: .public) nodes")
+        }
         for index in evidence {
             let node = snapshot.nodes[index]
-            let values = node.debugAttributes.keys.sorted().map {
-                "\($0)=\(quoted(node.debugAttributes[$0] ?? ""))"
-            }.joined(separator: " ")
-            Log.context.notice("SymbolScan CODEX PROJECT AX[\(index, privacy: .public)] depth=\(node.depth, privacy: .public) role=\(node.role, privacy: .public) id=\(node.identifier ?? "-", privacy: .public) \(values, privacy: .public)")
+            Log.context.notice("SymbolScan CODEX PROJECT MATCH \(nodeDescription(index: index, node: node), privacy: .public)")
+        }
+
+        let inspectedControlIndices = snapshot.nodes.indices.filter {
+            ["AXButton", "AXPopUpButton", "AXMenuButton", "AXImage"]
+                .contains(snapshot.nodes[$0].role)
+                && !snapshot.nodes[$0].debugAttributes.isEmpty
+        }
+        if inspectedControlIndices.isEmpty {
+            Log.context.notice("SymbolScan CODEX PROJECT LABELED CONTROLS: <none exposed by AX>")
+        } else {
+            Log.context.notice("SymbolScan CODEX PROJECT LABELED CONTROLS: showing \(min(30, inspectedControlIndices.count), privacy: .public) of \(inspectedControlIndices.count, privacy: .public)")
+            for index in inspectedControlIndices.prefix(30) {
+                let node = snapshot.nodes[index]
+                let isAnchor = CodexProjectSelectorLocator.isProjectAnchor(node)
+                Log.context.notice("SymbolScan CODEX PROJECT CONTROL anchor=\(isAnchor, privacy: .public) \(nodeDescription(index: index, node: node), privacy: .public)")
+            }
+        }
+        if candidates.isEmpty {
+            Log.context.notice("SymbolScan CODEX PROJECT CANDIDATES: <none>")
         }
         for candidate in candidates {
             Log.context.notice("SymbolScan CODEX PROJECT CANDIDATE kind=\(String(describing: candidate.kind), privacy: .public) value=\(quoted(candidate.value), privacy: .public)")
         }
         Log.context.notice("SymbolScan CODEX PROJECT RESOLVED: \(resolvedRoot?.path ?? "<none>", privacy: .public)")
         Log.context.notice("===== SymbolScan CODEX PROJECT TRACE END =====")
+    }
+
+    private static func nodeDescription(index: Int,
+                                        node: AccessibilityNodeSnapshot) -> String {
+        let values = node.debugAttributes.keys.sorted().map {
+            "\($0)=\(quoted(node.debugAttributes[$0] ?? ""))"
+        }.joined(separator: " ")
+        return "AX[\(index)] parent=\(node.parentIndex.map(String.init) ?? "-") depth=\(node.depth) role=\(node.role) id=\(quoted(node.identifier ?? "-")) \(values)"
     }
 
     private static func quoted(_ value: String) -> String {
