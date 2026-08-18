@@ -74,4 +74,28 @@ import Foundation
         let dir = Symbol(name: "src", kind: .directory, filePath: "src", line: 0)
         #expect(dir.injectionText == "src")
     }
+
+    // MARK: - docTooltip (T27)
+
+    @Test func docTooltipIsNilWhenNoDoc() {
+        let sym = Symbol(name: "f", kind: .function, filePath: "a.swift", line: 1)
+        #expect(sym.docTooltip == nil)
+    }
+
+    @Test func docTooltipIsFirstNonEmptyLineTrimmed() {
+        let multiline = Symbol(name: "f", kind: .function, filePath: "a.swift", line: 1,
+                               doc: "Fetches the widget.\n\nUsed by the picker.")
+        #expect(multiline.docTooltip == "Fetches the widget.")
+
+        // Leading blank lines are skipped; surrounding whitespace is trimmed.
+        let padded = Symbol(name: "g", kind: .function, filePath: "a.swift", line: 1,
+                            doc: "\n   \n   Second line has the summary.   ")
+        #expect(padded.docTooltip == "Second line has the summary.")
+    }
+
+    @Test func docTooltipIsNilForWhitespaceOnlyDoc() {
+        let blank = Symbol(name: "h", kind: .function, filePath: "a.swift", line: 1,
+                           doc: "   \n\t\n  ")
+        #expect(blank.docTooltip == nil)
+    }
 }

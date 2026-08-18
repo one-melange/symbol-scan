@@ -368,6 +368,9 @@ struct SymbolRow: View {
         .padding(.vertical, 10)
         .background(isSelected ? Color.accentColor.opacity(0.15) : .clear)
         .animation(.easeInOut(duration: 0.08), value: isSelected)
+        // T27: surface the collected docstring (T26) as a hover tooltip — first line only, no
+        // layout change. Empty string means no tooltip, so undocumented rows behave as before.
+        .help(symbol.docTooltip ?? "")
     }
 
     private var kindColor: Color {

@@ -28,6 +28,19 @@ struct Symbol: Identifiable, Hashable, Codable {
         return parts.suffix(2).joined(separator: "/")
     }
 
+    /// The first non-empty line of `doc`, for the picker's hover tooltip (`.help`), or `nil` when
+    /// the symbol carries no documentation (so the row applies no tooltip). Display-only: search
+    /// and injection deliberately ignore `doc` (see T27) — this is the only place it surfaces.
+    var docTooltip: String? {
+        guard let doc else { return nil }
+        let firstLine = doc
+            .split(whereSeparator: \.isNewline)
+            .lazy
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { !$0.isEmpty }
+        return (firstLine?.isEmpty == false) ? firstLine : nil
+    }
+
     /// The reference **body** injected (or copied) when this entry is picked — the leading
     /// prefix marker (`@` / `#`) is NOT included here: for the `@`/`#` triggers the user has
     /// already typed it into the target app (see `EventTap`, which passes those keys through),
