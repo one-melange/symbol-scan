@@ -157,7 +157,7 @@ synchronized group, so new files are picked up automatically (no project edit ne
 
 | Permission | Required for | Where to grant |
 | --- | --- | --- |
-| Accessibility | Global hotkey, text injection, and bounded Codex project monitoring | System Settings → Privacy & Security → Accessibility |
+| Accessibility | Global hotkey, text injection, and hotkey-triggered Codex project detection | System Settings → Privacy & Security → Accessibility |
 
 ---
 
@@ -180,9 +180,10 @@ synchronized group, so new files are picked up automatically (no project edit ne
 - Choose the repo once with **Choose Repo…** if the app exposes only its project name. Names are
   resolved conservatively against known repos and are ignored when ambiguous; exact paths can
   discover a repo or worktree without prior selection.
-- While Codex is active, SymbolScan polls its project-folder control about every 0.8 seconds. Each
-  probe is node/depth/time bounded, stops shortly after finding the selector, and runs off the main
-  thread; failed lookups keep the current repo. The picker never waits for a probe before opening.
+- Invoke the SymbolScan hotkey while Codex owns focus to run a project-folder probe. Detection does
+  not poll or observe app activation. Each probe is node/depth/time bounded, stops shortly after
+  finding the selector, and runs off the main thread; failed lookups keep the current repo. The
+  picker never waits for a probe before opening.
 - For live diagnosis, run a **Debug** build from Xcode, invoke the picker in Codex, and filter the
   Xcode console for `SymbolScan CODEX PROJECT`. The concise trace prints only selector evidence,
   extracted candidates, and `RESOLVED`. Debug builds additionally print diagnostic-only `AXValue`

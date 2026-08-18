@@ -76,13 +76,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Provisions the model (first-run background download). Started on launch so it's usually ready
     /// before the first ⌘E; observed by the picker + menu bar for progress.
     private var modelProvisioner: ModelProvisioner?
-    /// Resolves a supported app's focused AX hierarchy into a verified git root. AX IPC runs on its
-    /// own queue; the monitor decides when to scan. Debug builds can emit an explicit raw-value AX
-    /// trace for live diagnosis; Release builds retain the privacy-filtered snapshot.
+    /// Resolves Codex's project selector into a verified git root after a hotkey invocation.
     private let workspaceContextDetector = WorkspaceContextDetector()
-    /// Event-driven + polling context monitor. Created after the index so resolved roots can flow
-    /// through the same activation path as manual and restored repositories.
-    private var workspaceContextMonitor: WorkspaceContextMonitor?
+    /// Invalidates a late AX result after a newer hotkey or explicit manual repository selection.
+    private var workspaceContextRequestID = 0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory) // No dock icon
@@ -116,22 +113,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         controller.onChooseRepo = { [weak self] in self?.chooseRepo() }
         controller.onReindex = { [weak self] in self?.reindex() }
 
-        let monitor = WorkspaceContextMonitor(
-            detector: workspaceContextDetector,
-            knownRoots: { [weak self] in
-                ([self?.symbolIndex?.indexedRepoRoot].compactMap { $0 }
-                 + RepoPreference.loadRecents())
-            },
-            onResolvedRoot: { [weak self] root, appName in
-                self?.activateRepo(root, source: .automatic(appName: appName))
-            }
-        )
-        workspaceContextMonitor = monitor
-        controller.onVisibilityChanged = { [weak monitor] visible, targetApp in
-            if visible { monitor?.overlayDidOpen(targetApp: targetApp) }
-            else { monitor?.overlayDidClose() }
-        }
-
         statusItem = StatusItemController(
             index: index,
             provisioner: provisioner,
@@ -141,7 +122,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             onOpenHotkeys: { [weak self] in self?.openHotkeys() },
             onSetAutomaticDetection: { [weak self] enabled in
                 AutomaticRepoDetectionPreference.setEnabled(enabled)
-                self?.workspaceContextMonitor?.setEnabled(enabled)
+                if !enabled { self?.workspaceContextRequestID &+= 1 }
             },
             onSetAutomaticSwitchNotifications: { enabled in
                 AutomaticRepoSwitchNotificationPreference.setEnabled(enabled)
@@ -159,7 +140,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let active = RepoPreference.loadActive() {
             activateRepo(active, source: .restored)
         }
-        monitor.start()
     }
 
     // MARK: - Repo commands
@@ -170,12 +150,33 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         case restored
     }
 
-    /// Capture the target application before SymbolScan activates itself and open immediately. The
-    /// long-lived monitor has normally preselected the repo already; opening also requests a traced
-    /// refresh without delaying keyboard focus or rebuilding the picker a second time.
+    /// Open immediately, then run one traced AX probe against the app that owned focus. Detection
+    /// never runs on a timer or application-activation event; the global hotkey is its only trigger.
     private func openPicker(match: HotkeyMatch) {
+        workspaceContextRequestID &+= 1
+        let requestID = workspaceContextRequestID
         let frontmost = NSWorkspace.shared.frontmostApplication
         overlayWindowController?.show(match: match, targetApp: frontmost)
+
+        guard AutomaticRepoDetectionPreference.isEnabled(),
+              let app = frontmost,
+              app.bundleIdentifier != Bundle.main.bundleIdentifier,
+              let bundleIdentifier = app.bundleIdentifier else { return }
+        let identity = RunningAppIdentity(processIdentifier: app.processIdentifier,
+                                          bundleIdentifier: bundleIdentifier,
+                                          localizedName: app.localizedName)
+        guard workspaceContextDetector.supports(identity) else { return }
+
+        let knownRoots = ([symbolIndex?.indexedRepoRoot].compactMap { $0 }
+                          + RepoPreference.loadRecents())
+        let appName = workspaceContextDetector.displayName(for: identity)
+        workspaceContextDetector.detect(app: identity, knownRoots: knownRoots, trace: true) {
+            [weak self] root in
+            DispatchQueue.main.async {
+                guard let self, self.workspaceContextRequestID == requestID, let root else { return }
+                self.activateRepo(root, source: .automatic(appName: appName))
+            }
+        }
     }
 
     /// One path for restore, menu/picker choices, and AX detection keeps index + watcher state in
@@ -184,6 +185,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func activateRepo(_ url: URL, source: RepoActivationSource) {
         let root = RepoCandidateResolver.canonical(url)
         if case .manual = source {
+            workspaceContextRequestID &+= 1
             RepoPreference.setActive(root)
         }
 
@@ -265,8 +267,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func requestPermissions() {
-        // Accessibility — required for the global CGEventTap, text injection, and bounded AX
-        // monitoring that identifies the active Codex project.
+        // Accessibility — required for the global CGEventTap, text injection, and the bounded AX
+        // lookup that identifies the active Codex project when the hotkey is invoked.
         let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeRetainedValue(): true]
         let trusted = AXIsProcessTrustedWithOptions(options)
         if !trusted {
@@ -282,7 +284,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// drop the last few saves' worth of index updates (T23). The in-memory index is always current;
     /// this just keeps the on-disk cache from lagging across a restart.
     func applicationWillTerminate(_ notification: Notification) {
-        workspaceContextMonitor?.stop()
         symbolIndex?.flushPendingWrites()
     }
 

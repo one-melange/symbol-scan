@@ -187,13 +187,6 @@ import Testing
         #expect(RepoCandidateResolver.resolve([candidate], knownRoots: [repoA, repoB]) == nil)
     }
 
-    @Test func monitorRejectsAResultFromThePreviousApp() {
-        #expect(WorkspaceMonitorResultPolicy.accepts(targetProcessIdentifier: 101,
-                                                     currentTargetProcessIdentifier: 101))
-        #expect(!WorkspaceMonitorResultPolicy.accepts(targetProcessIdentifier: 101,
-                                                      currentTargetProcessIdentifier: 202))
-    }
-
     @Test func sameCanonicalRootDoesNotReactivate() {
         let current = URL(fileURLWithPath: "/tmp/parent/../repo")
         let candidate = URL(fileURLWithPath: "/tmp/repo")

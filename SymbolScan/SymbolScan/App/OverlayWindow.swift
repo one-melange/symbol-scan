@@ -85,8 +85,6 @@ class OverlayWindowController: NSWindowController {
     var onChooseRepo: (() -> Void)?
     /// Invoked when the user asks to rescan the active repo (⌘R or the in-picker action).
     var onReindex: (() -> Void)?
-    /// Keeps workspace monitoring pinned to the originating coding app while SymbolScan is active.
-    var onVisibilityChanged: ((Bool, NSRunningApplication?) -> Void)?
 
     init(index: SymbolIndex,
          llmClient: (any LLMClient)? = nil,
@@ -165,11 +163,9 @@ class OverlayWindowController: NSWindowController {
         NSApp.activate(ignoringOtherApps: true)
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
-        onVisibilityChanged?(true, previousApp)
     }
 
     func hide() {
-        let wasVisible = window?.isVisible == true
         // Cancel any in-flight explanation before dropping the view model — releasing the last
         // reference does NOT cancel its `explainTask`, so generation would otherwise keep running
         // (and burning model resources) invisibly after the overlay closes.
@@ -177,7 +173,6 @@ class OverlayWindowController: NSWindowController {
         viewModel?.resetExplanation()
         window?.orderOut(nil)
         viewModel = nil
-        if wasVisible { onVisibilityChanged?(false, previousApp) }
     }
 
     /// Resize the overlay between the compact picker and the taller explanation layout, re-pinning it
