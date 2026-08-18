@@ -40,7 +40,10 @@ struct FakeLLMClient: LLMClient {
 
     @Test func streamsTokensThenDone() async {
         let vm = makeVM(FakeLLMClient(tokens: ["Hel", "lo"]))
+        vm.moveSelection(1)
+        #expect(vm.isDocumentationPopoverPresented)
         vm.explain()
+        #expect(!vm.isDocumentationPopoverPresented)
         await vm.explainTask?.value
         #expect(vm.explanation == .done("Hello"))
     }

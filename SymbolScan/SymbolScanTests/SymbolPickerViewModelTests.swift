@@ -85,10 +85,13 @@ import Foundation
         let vm = makeVM(["a", "ab", "abc"])
         vm.updateQuery("a")
         #expect(vm.results.count == 3)
+        #expect(!vm.isDocumentationPopoverPresented)
         vm.moveSelection(-1)             // wrap up from 0 → last
         #expect(vm.selectedIndex == 2)
+        #expect(vm.isDocumentationPopoverPresented)
         vm.moveSelection(1)              // wrap down from last → 0
         #expect(vm.selectedIndex == 0)
+        #expect(vm.isDocumentationPopoverPresented)
     }
 
     @Test func moveSelectionOnEmptyIsNoOp() {
@@ -97,6 +100,22 @@ import Foundation
         #expect(vm.results.isEmpty)
         vm.moveSelection(1)
         #expect(vm.selectedIndex == 0)
+        #expect(!vm.isDocumentationPopoverPresented)
+    }
+
+    @Test func documentationPopoverClosesForQueryAndMouseSelectionChanges() {
+        let vm = makeVM(["alpha", "alphabet", "alpine"])
+        vm.updateQuery("al")
+        vm.moveSelection(1)
+        #expect(vm.isDocumentationPopoverPresented)
+
+        vm.select(2) // mouse-hover selection uses the same entry point
+        #expect(!vm.isDocumentationPopoverPresented)
+
+        vm.moveSelection(-1)
+        #expect(vm.isDocumentationPopoverPresented)
+        vm.updateQuery("alpha")
+        #expect(!vm.isDocumentationPopoverPresented)
     }
 
     @Test func selectedSymbolTracksArrowNavigation() {

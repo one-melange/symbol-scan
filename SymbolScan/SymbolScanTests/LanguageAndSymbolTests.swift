@@ -74,4 +74,23 @@ import Foundation
         let dir = Symbol(name: "src", kind: .directory, filePath: "src", line: 0)
         #expect(dir.injectionText == "src")
     }
+
+    // MARK: - documentationText (T27)
+
+    @Test func documentationTextUsesFallbackWhenNoDoc() {
+        let sym = Symbol(name: "f", kind: .function, filePath: "a.swift", line: 1)
+        #expect(sym.documentationText == "No documentation. Use ⌘E to analyze.")
+    }
+
+    @Test func documentationTextKeepsTheFullDocAndTrimsOuterWhitespace() {
+        let multiline = Symbol(name: "f", kind: .function, filePath: "a.swift", line: 1,
+                               doc: "  Fetches the widget.\n\nUsed by the picker.  \n")
+        #expect(multiline.documentationText == "Fetches the widget.\n\nUsed by the picker.")
+    }
+
+    @Test func documentationTextUsesFallbackForWhitespaceOnlyDoc() {
+        let blank = Symbol(name: "h", kind: .function, filePath: "a.swift", line: 1,
+                           doc: "   \n\t\n  ")
+        #expect(blank.documentationText == Symbol.noDocumentationMessage)
+    }
 }

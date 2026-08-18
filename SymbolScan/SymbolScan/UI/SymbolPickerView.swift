@@ -88,7 +88,12 @@ struct SymbolPickerView: View {
                         // also sets `.id(i)` gave SwiftUI two conflicting identities, so it
                         // retained stale rows (e.g. kept showing the empty-query results).
                         ForEach(Array(vm.results.enumerated()), id: \.offset) { i, sym in
-                            SymbolRow(symbol: sym, isSelected: i == vm.selectedIndex)
+                            SymbolRow(
+                                symbol: sym,
+                                isSelected: i == vm.selectedIndex,
+                                showsDocumentationPopover: i == vm.selectedIndex
+                                    && vm.isDocumentationPopoverPresented
+                            )
                                 .id(i)
                                 .contentShape(Rectangle())
                                 .onTapGesture { vm.select(i); onResolve(.inject) }
@@ -325,6 +330,7 @@ struct SearchFieldRepresentable: NSViewRepresentable {
 struct SymbolRow: View {
     let symbol: Symbol
     let isSelected: Bool
+    let showsDocumentationPopover: Bool
 
     var body: some View {
         HStack(spacing: 10) {
@@ -368,6 +374,12 @@ struct SymbolRow: View {
         .padding(.vertical, 10)
         .background(isSelected ? Color.accentColor.opacity(0.15) : .clear)
         .animation(.easeInOut(duration: 0.08), value: isSelected)
+        // SwiftUI `.help` never presents from this floating, borderless accessory window on macOS
+        // 26. Anchor an AppKit-owned popover to the selected row instead (T27).
+        .background(DocumentationPopoverAnchor(
+            text: symbol.documentationText,
+            isPresented: showsDocumentationPopover
+        ))
     }
 
     private var kindColor: Color {
@@ -378,6 +390,112 @@ struct SymbolRow: View {
         case .constant, .variable, .type: return .green
         case .file, .directory:           return .gray
         }
+    }
+}
+
+// MARK: - Documentation popover
+
+/// An invisible AppKit anchor spanning a symbol row. `NSPopover` presentation is managed outside
+/// SwiftUI because `.help` resolves its text but does not create a visible tooltip window from the
+/// picker's floating borderless `NSWindow` on macOS 26.
+private struct DocumentationPopoverAnchor: NSViewRepresentable {
+    let text: String
+    let isPresented: Bool
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> PopoverAnchorView {
+        PopoverAnchorView()
+    }
+
+    func updateNSView(_ nsView: PopoverAnchorView, context: Context) {
+        context.coordinator.update(text: text, isPresented: isPresented, anchor: nsView)
+    }
+
+    static func dismantleNSView(_ nsView: PopoverAnchorView, coordinator: Coordinator) {
+        coordinator.dismiss()
+    }
+
+    final class Coordinator {
+        private let contentController = DocumentationPopoverViewController()
+        private let popover: NSPopover
+        private var shouldPresent = false
+
+        init() {
+            let popover = NSPopover()
+            popover.behavior = .applicationDefined
+            popover.animates = false
+            popover.contentViewController = contentController
+            self.popover = popover
+        }
+
+        func update(text: String, isPresented: Bool, anchor: NSView) {
+            contentController.update(text: text)
+            shouldPresent = isPresented
+
+            guard isPresented else {
+                popover.close()
+                return
+            }
+
+            // A representable can update before AppKit has attached it to the hosting window. Defer
+            // presentation one runloop turn and re-check state so a superseded row cannot flash.
+            DispatchQueue.main.async { [weak self, weak anchor] in
+                guard let self, self.shouldPresent, let anchor, anchor.window != nil else { return }
+                if !self.popover.isShown {
+                    self.popover.show(
+                        relativeTo: anchor.bounds,
+                        of: anchor,
+                        preferredEdge: .maxX
+                    )
+                }
+            }
+        }
+
+        func dismiss() {
+            shouldPresent = false
+            popover.close()
+        }
+    }
+}
+
+/// A non-interactive anchoring view so the SwiftUI row keeps ownership of hover and click handling.
+private final class PopoverAnchorView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+/// Small native popover body with a fixed readable width and a bounded multiline label. Symbol docs
+/// are capped at 1,000 characters during extraction; ten lines keeps the picker compact while still
+/// surfacing substantially more context than the discarded one-line hover tooltip.
+private final class DocumentationPopoverViewController: NSViewController {
+    private let label = NSTextField(wrappingLabelWithString: "")
+
+    override func loadView() {
+        let container = NSView()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = .systemFont(ofSize: 12)
+        label.textColor = .labelColor
+        label.maximumNumberOfLines = 10
+        label.lineBreakMode = .byWordWrapping
+
+        container.addSubview(label)
+        NSLayoutConstraint.activate([
+            container.widthAnchor.constraint(equalToConstant: 360),
+            label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
+            label.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
+            label.topAnchor.constraint(equalTo: container.topAnchor, constant: 10),
+            label.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -10),
+        ])
+        view = container
+    }
+
+    func update(text: String) {
+        loadViewIfNeeded()
+        guard label.stringValue != text else { return }
+        label.stringValue = text
+        label.invalidateIntrinsicContentSize()
+        view.layoutSubtreeIfNeeded()
+        preferredContentSize = NSSize(width: 360, height: max(view.fittingSize.height, 40))
     }
 }
 

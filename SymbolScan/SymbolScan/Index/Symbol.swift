@@ -28,6 +28,18 @@ struct Symbol: Identifiable, Hashable, Codable {
         return parts.suffix(2).joined(separator: "/")
     }
 
+    static let noDocumentationMessage = "No documentation. Use ⌘E to analyze."
+
+    /// Documentation rendered in the picker's arrow-navigation popover. Extraction already cleans
+    /// comment markers and indentation; this final trim removes padding around manually-constructed
+    /// or older cached values. The fallback makes the popover useful for every selected symbol.
+    /// Display-only: search and injection deliberately ignore `doc` (see T27).
+    var documentationText: String {
+        guard let doc else { return Self.noDocumentationMessage }
+        let cleaned = doc.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? Self.noDocumentationMessage : cleaned
+    }
+
     /// The reference **body** injected (or copied) when this entry is picked — the leading
     /// prefix marker (`@` / `#`) is NOT included here: for the `@`/`#` triggers the user has
     /// already typed it into the target app (see `EventTap`, which passes those keys through),

@@ -21,7 +21,7 @@ _None._
 
 ## Next
 
-- [ ] (T27) Surface collected docstrings in the picker — T26 collects `Symbol.doc` but nothing renders it. Options: first-line tooltip via SwiftUI `.help` on `SymbolRow` (lowest-footprint, no layout change), or a truncated second subtitle line (revisit `rowHeight`/list sizing at `SymbolPickerView.swift:21,96`). Search/injection deliberately unchanged. Related to T12's "full-signature tooltip" · `SymbolScan/SymbolScan/UI/SymbolPickerView.swift`
+_None._
 
 ## Later
 
@@ -33,6 +33,7 @@ _None._
 
 ## Done
 
+- [x] (T27) Surface collected docstrings in the picker — arrow-key navigation now opens an AppKit-managed `NSPopover` anchored to the selected `SymbolRow`, showing the cleaned full `Symbol.doc`; undocumented symbols show **“No documentation. Use ⌘E to analyze.”** Query changes and mouse-driven selection changes dismiss it. This replaces the original SwiftUI `.help` attempt, whose text resolved internally but never presented a tooltip from the app's floating borderless accessory window on macOS 26. Search and injection stay deliberately unchanged. Pure `Symbol.documentationText` fallback/trim coverage plus view-model presentation-state coverage · `SymbolScan/SymbolScan/Index/Symbol.swift`, `UI/SymbolPickerView.swift`, `UI/SymbolPickerViewModel.swift`, `SymbolScanTests/LanguageAndSymbolTests.swift`, `SymbolPickerViewModelTests.swift` · PR #30
 - [x] (T30) Improve overlay footer legibility — raised the repo metadata and keyboard-hint foregrounds from tertiary/quaternary to adaptive primary colors with explicit opacity, and strengthened font weights while retaining the compact 520pt layout and semantic light/dark appearance behavior · `SymbolScan/SymbolScan/UI/SymbolPickerView.swift` · PR #29
 - [x] (T29) Refresh search results when the active repo changes — `SymbolIndex` now publishes an explicit searchable-content revision after every atomic symbol snapshot replacement; `SymbolPickerViewModel` observes it, reapplies the existing query, resets selection, and clears any explanation tied to the previous snapshot. Regression coverage switches between same-count indexes and verifies missing matches disappear, preventing stale repo-A rows beneath repo-B metadata · `SymbolScan/SymbolScan/Index/SymbolIndex.swift`, `UI/SymbolPickerViewModel.swift`, `SymbolScanTests/SymbolPickerViewModelTests.swift` · PR #29
 - [x] (T28) Local-LLM “explain symbol” (⌘E) — shipped the explain flow, lifecycle hardening, bundled llama.cpp runtime, and first-launch model provisioning in PRs #26–#28. End-to-end behavior has now been manually tested and confirmed working; prompt-enrichment ideas remain optional follow-ups rather than blockers · `SymbolScan/SymbolScan/LLM/`, `UI/SymbolPickerView.swift`, `UI/SymbolPickerViewModel.swift`, `App/OverlayWindow.swift`, `App/AppDelegate.swift`, `SymbolScan.xcodeproj/project.pbxproj`
