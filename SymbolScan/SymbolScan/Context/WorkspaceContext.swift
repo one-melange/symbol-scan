@@ -13,15 +13,20 @@ nonisolated struct AccessibilityNodeSnapshot: Equatable, Sendable {
     let depth: Int
     let role: String
     let identifier: String?
+    let position: CGPoint?
+    let size: CGSize?
     let attributes: [String: String]
     let debugAttributes: [String: String]
 
     init(parentIndex: Int? = nil, depth: Int, role: String, identifier: String?,
+         position: CGPoint? = nil, size: CGSize? = nil,
          attributes: [String: String], debugAttributes: [String: String] = [:]) {
         self.parentIndex = parentIndex
         self.depth = depth
         self.role = role
         self.identifier = identifier
+        self.position = position
+        self.size = size
         self.attributes = attributes
         self.debugAttributes = debugAttributes
     }
@@ -49,13 +54,11 @@ nonisolated protocol WorkspaceContextProvider: Sendable {
     func candidates(from snapshot: AccessibilitySnapshot, knownRoots: [URL])
         -> [WorkspaceCandidate]
     func evidenceNodeIndices(in snapshot: AccessibilitySnapshot, knownRoots: [URL]) -> [Int]
-    func isTraversalAnchor(_ node: AccessibilityNodeSnapshot) -> Bool
 }
 
 extension WorkspaceContextProvider {
     var displayName: String? { nil }
     func evidenceNodeIndices(in snapshot: AccessibilitySnapshot, knownRoots: [URL]) -> [Int] { [] }
-    func isTraversalAnchor(_ node: AccessibilityNodeSnapshot) -> Bool { false }
 }
 
 nonisolated struct WorkspaceProviderRegistry: Sendable {
@@ -88,9 +91,6 @@ nonisolated struct CodexWorkspaceContextProvider: WorkspaceContextProvider {
         CodexProjectSelectorLocator.evidenceNodeIndices(in: snapshot, knownRoots: knownRoots)
     }
 
-    func isTraversalAnchor(_ node: AccessibilityNodeSnapshot) -> Bool {
-        CodexProjectSelectorLocator.isProjectAnchor(node)
-    }
 }
 
 /// Codex exposes the active project through the folder control at the upper-left of a task. When
@@ -111,35 +111,49 @@ nonisolated enum CodexProjectSelectorLocator {
                                           valueAttribute]
     private static let projectHints = ["project", "workspace", "repository", "working folder",
                                        "project folder", "open folder"]
+    private static let rejectedAnchorLabels = ["projects", "project sidebar options",
+                                               "add new project"]
     private static let controlRoles: Set<String> = ["AXButton", "AXPopUpButton", "AXMenuButton"]
+    private static let topToolbarHeight: CGFloat = 96
 
     static func candidates(in snapshot: AccessibilitySnapshot, knownRoots: [URL])
         -> [WorkspaceCandidate] {
+        let evidence = evidenceNodeIndices(in: snapshot, knownRoots: knownRoots)
         var exact: [WorkspaceCandidate] = []
-        for node in snapshot.nodes {
-            for key in [documentAttribute, urlAttribute, filenameAttribute] {
+        var labels: [WorkspaceCandidate] = []
+        for index in evidence {
+            let node = snapshot.nodes[index]
+            for key in [documentAttribute, urlAttribute, filenameAttribute] + labelAttributes {
                 if let value = node.attributes[key], let candidate = pathCandidate(value) {
                     exact.append(candidate)
+                } else if labelAttributes.contains(key), let value = node.attributes[key],
+                          let name = displayNameCandidate(value) {
+                    labels.append(name)
                 }
             }
         }
-
-        let evidence = evidenceNodeIndices(in: snapshot, knownRoots: knownRoots)
-        var labels: [WorkspaceCandidate] = []
-        for index in evidence {
-            for value in labelAttributes.compactMap({ snapshot.nodes[index].attributes[$0] }) {
-                if let path = pathCandidate(value) { exact.append(path) }
-                else if let name = displayNameCandidate(value) { labels.append(name) }
-            }
-        }
-        return deduplicated(exact + labels)
+        // A selector path is definitive and avoids exposing its generic "Open project" label as a
+        // second, lower-quality candidate. Names are only needed when no selector path is present.
+        return deduplicated(exact.isEmpty ? labels : exact)
     }
 
-    /// Return only the selector and its immediate AX neighborhood. The neighborhood lets the open
-    /// popover's folder icon act as the anchor while its adjacent name/path text supplies the value.
+    /// Return only the top-toolbar selector and its immediate AX neighborhood. Codex's sidebar also
+    /// contains project names and controls labelled "Projects"; position is what distinguishes the
+    /// active task selector from those navigation elements.
     static func evidenceNodeIndices(in snapshot: AccessibilitySnapshot,
                                     knownRoots: [URL]) -> [Int] {
-        let anchors = snapshot.nodes.indices.filter { isProjectAnchor(snapshot.nodes[$0]) }
+        guard let windowTop = snapshot.nodes.first(where: {
+            $0.role == "AXWindow" && $0.position != nil
+        })?.position?.y else { return [] }
+
+        let knownNames = Set(knownRoots.map { $0.lastPathComponent.lowercased() })
+        let anchors = snapshot.nodes.indices.filter { index in
+            let node = snapshot.nodes[index]
+            guard isTopToolbarControl(node, windowTop: windowTop) else { return false }
+            let labels = labelAttributes.compactMap { node.attributes[$0] }
+                .map { cleaned($0).lowercased() }
+            return isProjectAnchor(node) || labels.contains(where: knownNames.contains)
+        }
         var indices = Set<Int>()
         for anchor in anchors {
             let lower = max(0, anchor - 16)
@@ -149,18 +163,13 @@ nonisolated enum CodexProjectSelectorLocator {
                 indices.insert(candidate)
             }
         }
-
-        // Some builds label the closed project button with the repo name rather than a word such
-        // as "project". Include button labels directly, but never arbitrary static transcript text.
-        let knownNames = Set(knownRoots.map { $0.lastPathComponent.lowercased() })
-        for index in snapshot.nodes.indices where controlRoles.contains(snapshot.nodes[index].role) {
-            let node = snapshot.nodes[index]
-            if labelAttributes.compactMap({ node.attributes[$0] })
-                .map({ cleaned($0).lowercased() }).contains(where: knownNames.contains) {
-                indices.insert(index)
-            }
-        }
         return indices.sorted()
+    }
+
+    static func isTopToolbarControl(_ node: AccessibilityNodeSnapshot,
+                                    windowTop: CGFloat) -> Bool {
+        guard controlRoles.contains(node.role), let y = node.position?.y else { return false }
+        return y >= windowTop - 4 && y <= windowTop + topToolbarHeight
     }
 
     private static func sharesLocalContainer(_ lhs: Int, _ rhs: Int,
@@ -171,7 +180,7 @@ nonisolated enum CodexProjectSelectorLocator {
             var current = nodes[index].parentIndex
             for _ in 0..<3 {
                 guard let value = current, nodes.indices.contains(value) else { break }
-                result.insert(value)
+                if nodes[value].role != "AXWindow" { result.insert(value) }
                 current = nodes[value].parentIndex
             }
             return result
@@ -180,12 +189,13 @@ nonisolated enum CodexProjectSelectorLocator {
     }
 
     static func isProjectAnchor(_ node: AccessibilityNodeSnapshot) -> Bool {
-        let metadata = ([node.identifier, node.attributes[domIdentifierAttribute],
-                         node.attributes[titleAttribute],
-                         node.attributes[descriptionAttribute], node.attributes[helpAttribute],
-                         node.attributes[roleDescriptionAttribute]] as [String?])
+        let values = ([node.identifier, node.attributes[domIdentifierAttribute],
+                       node.attributes[titleAttribute], node.attributes[descriptionAttribute],
+                       node.attributes[helpAttribute],
+                       node.attributes[roleDescriptionAttribute]] as [String?])
             .compactMap { $0?.lowercased() }
-            .joined(separator: " ")
+        let metadata = values.joined(separator: " ")
+        guard !values.contains(where: rejectedAnchorLabels.contains) else { return false }
         return projectHints.contains(where: metadata.contains)
     }
 

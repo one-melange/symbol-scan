@@ -132,9 +132,10 @@ flowchart TD
     Parser -->|builds| Index
 ```
 
-Each hotkey invocation from Codex starts one project-selector probe. It stops shortly after finding
-that control and is time/node/depth bounded; snapshots are not persisted, and Release builds do not
-log AX text. There are no background AX scans or app-activation observers.
+Each hotkey invocation from Codex starts one project-selector probe. It skips dense sidebar/session
+lists and accepts project evidence only from the focused window's top toolbar band. The walk remains
+time/node/depth bounded; snapshots are not persisted, and Release builds do not log AX text. There
+are no background AX scans or app-activation observers.
 App-specific providers are registered separately from the traversal and shared resolver,
 leaving a narrow extension point for Terminal, iTerm, Ghostty, or other apps that can expose a
 focused tab's working directory in the future.

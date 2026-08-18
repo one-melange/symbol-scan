@@ -57,7 +57,15 @@ import Testing
 
     @Test func structuredDocumentPathRemainsExactEvidence() {
         let snapshot = AccessibilitySnapshot(nodes: [
-            AccessibilityNodeSnapshot(depth: 3, role: "AXWebArea", identifier: nil,
+            AccessibilityNodeSnapshot(depth: 0, role: "AXWindow", identifier: nil,
+                                      position: CGPoint(x: 100, y: 100), attributes: [:]),
+            AccessibilityNodeSnapshot(parentIndex: 0, depth: 1, role: "AXGroup",
+                                      identifier: nil, attributes: [:]),
+            AccessibilityNodeSnapshot(parentIndex: 1, depth: 2, role: "AXButton",
+                                      identifier: "project-menu",
+                                      position: CGPoint(x: 500, y: 112),
+                                      attributes: ["AXHelp": "Open project"]),
+            AccessibilityNodeSnapshot(parentIndex: 1, depth: 2, role: "AXWebArea", identifier: nil,
                                       attributes: ["AXDocument":
                                         "file:///tmp/my-repo/file.swift"])
         ])
@@ -69,7 +77,10 @@ import Testing
     @Test func projectButtonCanExposeTheKnownRepoName() {
         let root = URL(fileURLWithPath: "/tmp/symbol-scan")
         let snapshot = AccessibilitySnapshot(nodes: [
-            AccessibilityNodeSnapshot(depth: 4, role: "AXButton", identifier: nil,
+            AccessibilityNodeSnapshot(depth: 0, role: "AXWindow", identifier: nil,
+                                      position: CGPoint(x: 0, y: 0), attributes: [:]),
+            AccessibilityNodeSnapshot(parentIndex: 0, depth: 1, role: "AXButton", identifier: nil,
+                                      position: CGPoint(x: 550, y: 12),
                                       attributes: ["AXTitle": "symbol-scan"])
         ])
         #expect(CodexWorkspaceContextProvider().candidates(from: snapshot,
@@ -80,29 +91,31 @@ import Testing
 
     @Test func folderControlNeighborhoodFindsPopoverNameAndTildePath() {
         let snapshot = AccessibilitySnapshot(nodes: [
-            AccessibilityNodeSnapshot(depth: 10, role: "AXGroup", identifier: nil,
+            AccessibilityNodeSnapshot(depth: 0, role: "AXWindow", identifier: nil,
+                                      position: CGPoint(x: 0, y: 0), attributes: [:]),
+            AccessibilityNodeSnapshot(parentIndex: 0, depth: 10, role: "AXGroup", identifier: nil,
                                       attributes: [:]),
-            AccessibilityNodeSnapshot(parentIndex: 0, depth: 11, role: "AXButton",
+            AccessibilityNodeSnapshot(parentIndex: 1, depth: 11, role: "AXButton",
                                       identifier: "project-menu",
+                                      position: CGPoint(x: 550, y: 12),
                                       attributes: ["AXHelp": "Open project"]),
-            AccessibilityNodeSnapshot(parentIndex: 0, depth: 11, role: "AXImage", identifier: nil,
+            AccessibilityNodeSnapshot(parentIndex: 1, depth: 11, role: "AXImage", identifier: nil,
                                       attributes: ["AXDescription": "Project folder"]),
-            AccessibilityNodeSnapshot(parentIndex: 0, depth: 11, role: "AXStaticText",
+            AccessibilityNodeSnapshot(parentIndex: 1, depth: 11, role: "AXStaticText",
                                       identifier: nil,
                                       attributes: ["AXValue": "symbol-scan"]),
-            AccessibilityNodeSnapshot(parentIndex: 0, depth: 11, role: "AXStaticText",
+            AccessibilityNodeSnapshot(parentIndex: 1, depth: 11, role: "AXStaticText",
                                       identifier: nil,
                                       attributes: ["AXValue": "~/Code/symbol-scan"]),
             AccessibilityNodeSnapshot(depth: 10, role: "AXGroup", identifier: nil,
                                       attributes: [:]),
-            AccessibilityNodeSnapshot(parentIndex: 5, depth: 11, role: "AXStaticText",
+            AccessibilityNodeSnapshot(parentIndex: 6, depth: 11, role: "AXStaticText",
                                       identifier: nil,
                                       attributes: ["AXValue": "/Users/me/wrong-transcript-path"]),
         ])
         let candidates = CodexWorkspaceContextProvider().candidates(from: snapshot, knownRoots: [])
 
-        #expect(candidates.first == WorkspaceCandidate(value: "~/Code/symbol-scan", kind: .path))
-        #expect(candidates.contains(WorkspaceCandidate(value: "symbol-scan", kind: .displayName)))
+        #expect(candidates == [WorkspaceCandidate(value: "~/Code/symbol-scan", kind: .path)])
         #expect(!candidates.contains(WorkspaceCandidate(value: "/Users/me/wrong-transcript-path",
                                                         kind: .path)))
     }
@@ -110,6 +123,8 @@ import Testing
     @Test func transcriptAndGenericWindowButtonsAreIgnored() {
         let root = URL(fileURLWithPath: "/tmp/symbol-scan")
         let snapshot = AccessibilitySnapshot(nodes: [
+            AccessibilityNodeSnapshot(depth: 0, role: "AXWindow", identifier: nil,
+                                      position: CGPoint(x: 0, y: 0), attributes: [:]),
             AccessibilityNodeSnapshot(depth: 12, role: "AXStaticText", identifier: nil,
                                       attributes: ["AXValue": "symbol-scan"]),
             AccessibilityNodeSnapshot(depth: 1, role: "AXButton", identifier: nil,
@@ -123,7 +138,11 @@ import Testing
     @Test func debugOnlyValuesCannotInfluenceDetection() {
         let root = URL(fileURLWithPath: "/tmp/secret-project")
         let snapshot = AccessibilitySnapshot(nodes: [
-            AccessibilityNodeSnapshot(depth: 2, role: "AXButton", identifier: "project-menu",
+            AccessibilityNodeSnapshot(depth: 0, role: "AXWindow", identifier: nil,
+                                      position: CGPoint(x: 0, y: 0), attributes: [:]),
+            AccessibilityNodeSnapshot(parentIndex: 0, depth: 2, role: "AXButton",
+                                      identifier: "project-menu",
+                                      position: CGPoint(x: 550, y: 12),
                                       attributes: ["AXHelp": "Open project"],
                                       debugAttributes: ["AXValue": "secret-project"])
         ])
@@ -131,6 +150,56 @@ import Testing
                                                            knownRoots: [root]) == [
             WorkspaceCandidate(value: "Open project", kind: .displayName)
         ])
+    }
+
+    @Test func sidebarProjectsCannotOverrideTheTopToolbarProject() {
+        let product = URL(fileURLWithPath: "/tmp/product-cx-utilities")
+        let symbolScan = URL(fileURLWithPath: "/tmp/symbol-scan")
+        let snapshot = AccessibilitySnapshot(nodes: [
+            AccessibilityNodeSnapshot(depth: 0, role: "AXWindow", identifier: nil,
+                                      position: CGPoint(x: 0, y: 0), attributes: [:]),
+            AccessibilityNodeSnapshot(parentIndex: 0, depth: 15, role: "AXGroup",
+                                      identifier: nil, attributes: [:]),
+            AccessibilityNodeSnapshot(parentIndex: 1, depth: 16, role: "AXButton",
+                                      identifier: nil, position: CGPoint(x: 30, y: 220),
+                                      attributes: ["AXDescription": "product-cx-utilities"]),
+            AccessibilityNodeSnapshot(parentIndex: 1, depth: 16, role: "AXButton",
+                                      identifier: nil, position: CGPoint(x: 30, y: 270),
+                                      attributes: ["AXTitle": "Projects"]),
+            AccessibilityNodeSnapshot(parentIndex: 1, depth: 16, role: "AXPopUpButton",
+                                      identifier: nil, position: CGPoint(x: 400, y: 270),
+                                      attributes: ["AXDescription": "Project sidebar options"]),
+            AccessibilityNodeSnapshot(parentIndex: 0, depth: 15, role: "AXGroup",
+                                      identifier: nil, attributes: [:]),
+            AccessibilityNodeSnapshot(parentIndex: 5, depth: 16, role: "AXButton",
+                                      identifier: nil, position: CGPoint(x: 560, y: 12),
+                                      attributes: ["AXDescription": "symbol-scan"]),
+        ])
+
+        #expect(CodexWorkspaceContextProvider().candidates(
+            from: snapshot, knownRoots: [product, symbolScan]
+        ) == [WorkspaceCandidate(value: "symbol-scan", kind: .displayName)])
+    }
+
+    @Test func projectSidebarWithoutAToolbarSelectorProducesNoCandidate() {
+        let product = URL(fileURLWithPath: "/tmp/product-cx-utilities")
+        let snapshot = AccessibilitySnapshot(nodes: [
+            AccessibilityNodeSnapshot(depth: 0, role: "AXWindow", identifier: nil,
+                                      position: CGPoint(x: 0, y: 0), attributes: [:]),
+            AccessibilityNodeSnapshot(parentIndex: 0, depth: 16, role: "AXButton",
+                                      identifier: nil, position: CGPoint(x: 30, y: 220),
+                                      attributes: ["AXDescription": "product-cx-utilities"]),
+            AccessibilityNodeSnapshot(parentIndex: 0, depth: 16, role: "AXButton",
+                                      identifier: nil, position: CGPoint(x: 30, y: 270),
+                                      attributes: ["AXTitle": "Projects"]),
+            AccessibilityNodeSnapshot(parentIndex: 0, depth: 16, role: "AXPopUpButton",
+                                      identifier: nil, position: CGPoint(x: 400, y: 270),
+                                      attributes: ["AXDescription": "Project sidebar options"]),
+        ])
+
+        #expect(CodexWorkspaceContextProvider().candidates(
+            from: snapshot, knownRoots: [product]
+        ).isEmpty)
     }
 
     @Test func exactPathFindsPreviouslyUnknownRepo() throws {

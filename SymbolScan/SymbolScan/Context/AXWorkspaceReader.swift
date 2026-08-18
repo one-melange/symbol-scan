@@ -7,8 +7,8 @@ nonisolated protocol AccessibilitySnapshotReading: Sendable {
               knownRoots: [URL]) -> AccessibilitySnapshot
 }
 
-/// A deliberately small AX probe. It walks at most 180 elements and, once the app provider finds
-/// its target control, reads only enough following elements to cover that control's neighborhood.
+/// A deliberately small AX probe. It walks at most 180 elements, but skips dense list contents:
+/// Codex's project selector lives in the toolbar, while sidebar/session lists only add false signal.
 nonisolated final class AXWorkspaceReader: AccessibilitySnapshotReading, Sendable {
     private struct PendingNode {
         let element: AXUIElement
@@ -44,7 +44,6 @@ nonisolated final class AXWorkspaceReader: AccessibilitySnapshotReading, Sendabl
         var visited = Set<CFHashCode>()
         var nodes: [AccessibilityNodeSnapshot] = []
         var elements: [AXUIElement] = []
-        var nodesAfterAnchor: Int?
 
         while let pending = stack.popLast(), nodes.count < maxNodes,
               CFAbsoluteTimeGetCurrent() - started < timeBudget {
@@ -52,19 +51,15 @@ nonisolated final class AXWorkspaceReader: AccessibilitySnapshotReading, Sendabl
             guard visited.insert(hash).inserted else { continue }
 
             var parentForChildren = pending.parentIndex
+            var shouldDescend = true
             if let node = snapshot(pending.element, depth: pending.depth,
                                    parentIndex: pending.parentIndex) {
                 parentForChildren = nodes.count
                 nodes.append(node)
                 elements.append(pending.element)
-                if provider.isTraversalAnchor(node) {
-                    nodesAfterAnchor = min(nodesAfterAnchor ?? 24, 24)
-                } else if let remaining = nodesAfterAnchor {
-                    if remaining == 0 { break }
-                    nodesAfterAnchor = remaining - 1
-                }
+                shouldDescend = node.role != "AXList"
             }
-            guard pending.depth < maxDepth else { continue }
+            guard shouldDescend, pending.depth < maxDepth else { continue }
             let visible = elementArrayAttribute(kAXVisibleChildrenAttribute as String,
                                                 from: pending.element)
             let children = visible.isEmpty
@@ -94,6 +89,8 @@ nonisolated final class AXWorkspaceReader: AccessibilitySnapshotReading, Sendabl
                 depth: nodes[index].depth,
                 role: nodes[index].role,
                 identifier: nodes[index].identifier,
+                position: nodes[index].position,
+                size: nodes[index].size,
                 attributes: attributes,
                 debugAttributes: debugAttributes
             )
@@ -106,6 +103,8 @@ nonisolated final class AXWorkspaceReader: AccessibilitySnapshotReading, Sendabl
         let attributeNames = [
             kAXRoleAttribute as String,
             kAXIdentifierAttribute as String,
+            kAXPositionAttribute as String,
+            kAXSizeAttribute as String,
             CodexProjectSelectorLocator.documentAttribute,
             CodexProjectSelectorLocator.urlAttribute,
             CodexProjectSelectorLocator.filenameAttribute,
@@ -119,7 +118,7 @@ nonisolated final class AXWorkspaceReader: AccessibilitySnapshotReading, Sendabl
         guard let role = stringValue(copied[kAXRoleAttribute as String]) else { return nil }
 
         var attributes: [String: String] = [:]
-        for name in attributeNames.dropFirst(2)
+        for name in attributeNames.dropFirst(4)
             where name != CodexProjectSelectorLocator.valueAttribute {
             if let value = stringValue(copied[name]), value.count <= 300 {
                 attributes[name] = value
@@ -143,6 +142,8 @@ nonisolated final class AXWorkspaceReader: AccessibilitySnapshotReading, Sendabl
             depth: depth,
             role: role,
             identifier: stringValue(copied[kAXIdentifierAttribute as String]),
+            position: pointValue(copied[kAXPositionAttribute as String]),
+            size: sizeValue(copied[kAXSizeAttribute as String]),
             attributes: attributes,
             debugAttributes: debugAttributes
         )
@@ -177,6 +178,22 @@ nonisolated final class AXWorkspaceReader: AccessibilitySnapshotReading, Sendabl
             return url.absoluteString
         }
         return nil
+    }
+
+    private func pointValue(_ value: CFTypeRef?) -> CGPoint? {
+        guard let value, CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+        let axValue = unsafeBitCast(value, to: AXValue.self)
+        guard AXValueGetType(axValue) == .cgPoint else { return nil }
+        var point = CGPoint.zero
+        return AXValueGetValue(axValue, .cgPoint, &point) ? point : nil
+    }
+
+    private func sizeValue(_ value: CFTypeRef?) -> CGSize? {
+        guard let value, CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+        let axValue = unsafeBitCast(value, to: AXValue.self)
+        guard AXValueGetType(axValue) == .cgSize else { return nil }
+        var size = CGSize.zero
+        return AXValueGetValue(axValue, .cgSize, &size) ? size : nil
     }
 
     private func elementAttribute(_ name: String, from element: AXUIElement) -> AXUIElement? {
@@ -257,7 +274,7 @@ nonisolated private enum WorkspaceContextDebugTrace {
                      evidence: [Int], candidates: [WorkspaceCandidate],
                      knownRoots: [URL], resolvedRoot: URL?, elapsedMS: Int) {
         Log.context.notice("===== SymbolScan CODEX PROJECT TRACE app=\(app.bundleIdentifier, privacy: .public) visited=\(snapshot.nodes.count, privacy: .public)/180 elapsed=\(elapsedMS, privacy: .public)ms =====")
-        Log.context.notice("SymbolScan CODEX PROJECT TARGET: upper-left project/folder selector. Anchor rule: AXIdentifier/AXDOMIdentifier/AXTitle/AXDescription/AXHelp/AXRoleDescription contains project, workspace, repository, working folder, project folder, or open folder. A button whose label exactly matches a known repo name is also accepted.")
+        Log.context.notice("SymbolScan CODEX PROJECT TARGET: control within 96pt of the focused window's top edge. It must have project/workspace/repository/folder metadata or a label exactly matching one known repo. Projects, Project sidebar options, Add new project, and all controls below the toolbar band are rejected.")
         if knownRoots.isEmpty {
             Log.context.notice("SymbolScan CODEX PROJECT KNOWN REPOS: <none>")
         } else {
@@ -275,19 +292,28 @@ nonisolated private enum WorkspaceContextDebugTrace {
             Log.context.notice("SymbolScan CODEX PROJECT MATCH \(nodeDescription(index: index, node: node), privacy: .public)")
         }
 
+        let windowTop = snapshot.nodes.first(where: {
+            $0.role == "AXWindow" && $0.position != nil
+        })?.position?.y
         let inspectedControlIndices = snapshot.nodes.indices.filter {
             ["AXButton", "AXPopUpButton", "AXMenuButton", "AXImage"]
                 .contains(snapshot.nodes[$0].role)
                 && !snapshot.nodes[$0].debugAttributes.isEmpty
+        }.sorted {
+            (snapshot.nodes[$0].position?.y ?? .greatestFiniteMagnitude)
+                < (snapshot.nodes[$1].position?.y ?? .greatestFiniteMagnitude)
         }
         if inspectedControlIndices.isEmpty {
             Log.context.notice("SymbolScan CODEX PROJECT LABELED CONTROLS: <none exposed by AX>")
         } else {
-            Log.context.notice("SymbolScan CODEX PROJECT LABELED CONTROLS: showing \(min(30, inspectedControlIndices.count), privacy: .public) of \(inspectedControlIndices.count, privacy: .public)")
-            for index in inspectedControlIndices.prefix(30) {
+            Log.context.notice("SymbolScan CODEX PROJECT LABELED CONTROLS: sorted top-to-bottom, showing \(min(40, inspectedControlIndices.count), privacy: .public) of \(inspectedControlIndices.count, privacy: .public)")
+            for index in inspectedControlIndices.prefix(40) {
                 let node = snapshot.nodes[index]
                 let isAnchor = CodexProjectSelectorLocator.isProjectAnchor(node)
-                Log.context.notice("SymbolScan CODEX PROJECT CONTROL anchor=\(isAnchor, privacy: .public) \(nodeDescription(index: index, node: node), privacy: .public)")
+                let inTopBand = windowTop.map {
+                    CodexProjectSelectorLocator.isTopToolbarControl(node, windowTop: $0)
+                } ?? false
+                Log.context.notice("SymbolScan CODEX PROJECT CONTROL topBand=\(inTopBand, privacy: .public) semanticAnchor=\(isAnchor, privacy: .public) \(nodeDescription(index: index, node: node), privacy: .public)")
             }
         }
         if candidates.isEmpty {
@@ -305,7 +331,18 @@ nonisolated private enum WorkspaceContextDebugTrace {
         let values = node.debugAttributes.keys.sorted().map {
             "\($0)=\(quoted(node.debugAttributes[$0] ?? ""))"
         }.joined(separator: " ")
-        return "AX[\(index)] parent=\(node.parentIndex.map(String.init) ?? "-") depth=\(node.depth) role=\(node.role) id=\(quoted(node.identifier ?? "-")) \(values)"
+        let geometry = "pos=\(pointDescription(node.position)) size=\(sizeDescription(node.size))"
+        return "AX[\(index)] parent=\(node.parentIndex.map(String.init) ?? "-") depth=\(node.depth) role=\(node.role) id=\(quoted(node.identifier ?? "-")) \(geometry) \(values)"
+    }
+
+    private static func pointDescription(_ point: CGPoint?) -> String {
+        guard let point else { return "-" }
+        return "(\(Int(point.x)),\(Int(point.y)))"
+    }
+
+    private static func sizeDescription(_ size: CGSize?) -> String {
+        guard let size else { return "-" }
+        return "(\(Int(size.width)),\(Int(size.height)))"
     }
 
     private static func quoted(_ value: String) -> String {
