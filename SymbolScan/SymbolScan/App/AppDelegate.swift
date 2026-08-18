@@ -23,6 +23,7 @@ enum Log {
     static let scanner = Logger(subsystem: subsystem, category: "scanner")
     static let parser  = Logger(subsystem: subsystem, category: "parser")
     static let notify  = Logger(subsystem: subsystem, category: "notifications")
+    static let context = Logger(subsystem: subsystem, category: "workspace-context")
 }
 
 // MARK: - Login item
@@ -75,6 +76,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Provisions the model (first-run background download). Started on launch so it's usually ready
     /// before the first ⌘E; observed by the picker + menu bar for progress.
     private var modelProvisioner: ModelProvisioner?
+    /// Resolves a supported frontmost app's focused AX hierarchy into a verified git root. AX IPC
+    /// runs on its own queue; this object never observes apps continuously or records raw UI text.
+    private let workspaceContextDetector = WorkspaceContextDetector()
+    /// Monotonic request identity. A timeout, newer trigger, or manual repo selection clears the
+    /// pending id so a late AX result cannot open a second picker or override explicit user intent.
+    private var workspaceContextRequestID = 0
+    private var pendingWorkspaceContextRequestID: Int?
+    private static let workspaceDetectionDeadline: TimeInterval = 0.25
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory) // No dock icon
@@ -114,24 +123,98 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             onChooseRepo: { [weak self] in self?.chooseRepo() },
             onReindex: { [weak self] in self?.reindex() },
             onSwitch: { [weak self] url in self?.switchTo(url) },
-            onOpenHotkeys: { [weak self] in self?.openHotkeys() }
+            onOpenHotkeys: { [weak self] in self?.openHotkeys() },
+            onSetAutomaticDetection: { enabled in
+                AutomaticRepoDetectionPreference.setEnabled(enabled)
+            }
         )
 
         eventTap = EventTap { [weak self] match in
             guard let self else { return }
-            self.overlayWindowController?.show(match: match)
+            self.openPicker(match: match)
         }
         eventTap?.start()
 
         // Restore the last active repo. If a cache exists it loads instantly; otherwise it scans in
         // the background (non-blocking). A dead/non-git path is forgotten via `onRepoInvalid`.
         if let active = RepoPreference.loadActive() {
-            index.activateRepo(active)
-            retargetWatcher(to: active)
+            activateRepo(active, source: .restored)
         }
     }
 
     // MARK: - Repo commands
+
+    private enum RepoActivationSource {
+        case manual, automatic, restored
+    }
+
+    /// Capture the target application before SymbolScan activates itself, then give registered
+    /// providers a short off-main AX lookup window. Unsupported apps and inconclusive/slow reads
+    /// retain the current repository and preserve the hotkey's existing behavior.
+    private func openPicker(match: HotkeyMatch) {
+        workspaceContextRequestID &+= 1
+        let requestID = workspaceContextRequestID
+        pendingWorkspaceContextRequestID = nil
+
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        guard let app = frontmost,
+              app.bundleIdentifier != Bundle.main.bundleIdentifier,
+              let bundleIdentifier = app.bundleIdentifier else {
+            overlayWindowController?.show(match: match, targetApp: frontmost)
+            return
+        }
+
+        let identity = RunningAppIdentity(processIdentifier: app.processIdentifier,
+                                          bundleIdentifier: bundleIdentifier,
+                                          localizedName: app.localizedName)
+        guard AutomaticRepoDetectionPreference.isEnabled(),
+              workspaceContextDetector.supports(identity) else {
+            overlayWindowController?.show(match: match, targetApp: app)
+            return
+        }
+
+        pendingWorkspaceContextRequestID = requestID
+        let knownRoots = ([symbolIndex?.indexedRepoRoot].compactMap { $0 }
+                          + RepoPreference.loadRecents())
+
+        workspaceContextDetector.detect(app: identity, knownRoots: knownRoots) { [weak self] root in
+            DispatchQueue.main.async {
+                self?.finishPickerOpen(requestID: requestID, match: match,
+                                       targetApp: app, detectedRoot: root)
+            }
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.workspaceDetectionDeadline) { [weak self] in
+            self?.finishPickerOpen(requestID: requestID, match: match,
+                                   targetApp: app, detectedRoot: nil)
+        }
+    }
+
+    /// First completion wins. If AX exceeds the UX deadline its later result is deliberately ignored
+    /// until the next trigger rather than changing repositories underneath an already-open picker.
+    private func finishPickerOpen(requestID: Int, match: HotkeyMatch,
+                                  targetApp: NSRunningApplication?, detectedRoot: URL?) {
+        guard pendingWorkspaceContextRequestID == requestID else { return }
+        pendingWorkspaceContextRequestID = nil
+        if let detectedRoot { activateRepo(detectedRoot, source: .automatic) }
+        overlayWindowController?.show(match: match, targetApp: targetApp)
+    }
+
+    /// One path for restore, menu/picker choices, and AX detection keeps index + watcher state in
+    /// lockstep. Automatic roots are session-only so temporary worktrees do not replace the user's
+    /// durable manual fallback or fill the Recent Repos menu.
+    private func activateRepo(_ url: URL, source: RepoActivationSource) {
+        let root = RepoCandidateResolver.canonical(url)
+        if source == .manual {
+            pendingWorkspaceContextRequestID = nil
+            RepoPreference.setActive(root)
+        }
+
+        guard RepoActivationPolicy.shouldActivate(current: symbolIndex?.indexedRepoRoot,
+                                                  candidate: root) else { return }
+        symbolIndex?.activateRepo(root)
+        retargetWatcher(to: root)
+    }
 
     /// Point the file watcher at `root` (stopping any previous one) so saves there trigger an
     /// incremental reindex. Called after every `activateRepo`. Not started under the XCTest host —
@@ -166,9 +249,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
-        RepoPreference.setActive(url)
-        symbolIndex?.activateRepo(url)
-        retargetWatcher(to: url)
+        activateRepo(url, source: .manual)
     }
 
     /// Rescan the active repo from scratch (bypassing the cache).
@@ -179,9 +260,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Switch to an already-known repo (from the recents menu).
     private func switchTo(_ url: URL) {
-        RepoPreference.setActive(url)
-        symbolIndex?.activateRepo(url)
-        retargetWatcher(to: url)
+        activateRepo(url, source: .manual)
     }
 
     /// Open (or re-focus) the trigger-rebinding window. Edits persist via `HotkeyPreference` and
@@ -203,15 +282,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func requestPermissions() {
-        // Accessibility — required for CGEventTap
+        // Accessibility — required for the global CGEventTap, text injection, and the bounded AX
+        // lookup that identifies a Codex/Claude workspace when the picker opens.
         let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeRetainedValue(): true]
         let trusted = AXIsProcessTrustedWithOptions(options)
         if !trusted {
-            Log.app.warning("Accessibility permission not granted. CGEventTap will not work.")
+            Log.app.warning("Accessibility permission not granted. Hotkey, injection, and automatic repo detection will not work.")
         }
-
-        // Screen recording — required for ScreenCaptureKit
-        // Triggered automatically on first SCStream use; prompt appears then.
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -253,6 +330,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let onReindex: () -> Void
     private let onSwitch: (URL) -> Void
     private let onOpenHotkeys: () -> Void
+    private let onSetAutomaticDetection: (Bool) -> Void
     private let statusItem: NSStatusItem
     private var cancellables = Set<AnyCancellable>()
 
@@ -261,13 +339,15 @@ final class StatusItemController: NSObject, NSMenuDelegate {
          onChooseRepo: @escaping () -> Void,
          onReindex: @escaping () -> Void,
          onSwitch: @escaping (URL) -> Void,
-         onOpenHotkeys: @escaping () -> Void) {
+         onOpenHotkeys: @escaping () -> Void,
+         onSetAutomaticDetection: @escaping (Bool) -> Void) {
         self.index = index
         self.provisioner = provisioner
         self.onChooseRepo = onChooseRepo
         self.onReindex = onReindex
         self.onSwitch = onSwitch
         self.onOpenHotkeys = onOpenHotkeys
+        self.onSetAutomaticDetection = onSetAutomaticDetection
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
@@ -361,6 +441,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         hotkeys.target = self
         menu.addItem(hotkeys)
 
+        let automatic = NSMenuItem(title: "Detect Repo Automatically",
+                                   action: #selector(toggleAutomaticDetection), keyEquivalent: "")
+        automatic.target = self
+        automatic.state = AutomaticRepoDetectionPreference.isEnabled() ? .on : .off
+        menu.addItem(automatic)
+
         let login = NSMenuItem(title: "Open at Login", action: #selector(toggleLoginItem), keyEquivalent: "")
         login.target = self
         login.state = LoginItem.isEnabled ? .on : .off
@@ -390,6 +476,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     @objc private func chooseRepo() { onChooseRepo() }
     @objc private func reindexRepo() { onReindex() }
     @objc private func openHotkeys() { onOpenHotkeys() }
+
+    @objc private func toggleAutomaticDetection() {
+        onSetAutomaticDetection(!AutomaticRepoDetectionPreference.isEnabled())
+    }
     /// Menu rebuilds on every open (`menuNeedsUpdate`), so the checkmark re-reads `LoginItem.isEnabled`
     /// next time — no need to mutate the item here beyond flipping the registration.
     @objc private func toggleLoginItem() { LoginItem.setEnabled(!LoginItem.isEnabled) }
