@@ -28,17 +28,16 @@ struct Symbol: Identifiable, Hashable, Codable {
         return parts.suffix(2).joined(separator: "/")
     }
 
-    /// The first non-empty line of `doc`, for the picker's hover tooltip (`.help`), or `nil` when
-    /// the symbol carries no documentation (so the row applies no tooltip). Display-only: search
-    /// and injection deliberately ignore `doc` (see T27) — this is the only place it surfaces.
-    var docTooltip: String? {
-        guard let doc else { return nil }
-        let firstLine = doc
-            .split(whereSeparator: \.isNewline)
-            .lazy
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .first { !$0.isEmpty }
-        return (firstLine?.isEmpty == false) ? firstLine : nil
+    static let noDocumentationMessage = "No documentation. Use ⌘E to analyze."
+
+    /// Documentation rendered in the picker's arrow-navigation popover. Extraction already cleans
+    /// comment markers and indentation; this final trim removes padding around manually-constructed
+    /// or older cached values. The fallback makes the popover useful for every selected symbol.
+    /// Display-only: search and injection deliberately ignore `doc` (see T27).
+    var documentationText: String {
+        guard let doc else { return Self.noDocumentationMessage }
+        let cleaned = doc.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? Self.noDocumentationMessage : cleaned
     }
 
     /// The reference **body** injected (or copied) when this entry is picked — the leading

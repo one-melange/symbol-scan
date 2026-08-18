@@ -39,6 +39,9 @@ final class SymbolPickerViewModel: ObservableObject {
     @Published var query: String = ""
     @Published private(set) var results: [Symbol] = []
     @Published var selectedIndex: Int = 0
+    /// True only after arrow-key navigation requests the documentation popover. Query changes and
+    /// mouse-driven selection changes dismiss it so it never lingers on an unrelated symbol.
+    @Published private(set) var isDocumentationPopoverPresented = false
 
     /// The AI-explanation state for the current selection (`.idle` until the user presses ⌘E).
     @Published private(set) var explanation: ExplanationState = .idle
@@ -90,6 +93,7 @@ final class SymbolPickerViewModel: ObservableObject {
         query = newValue
         results = index.search(newValue)
         selectedIndex = 0
+        isDocumentationPopoverPresented = false
         resetExplanation()
     }
 
@@ -99,12 +103,14 @@ final class SymbolPickerViewModel: ObservableObject {
     private func refreshResultsAfterIndexChange() {
         results = index.search(query)
         selectedIndex = 0
+        isDocumentationPopoverPresented = false
         resetExplanation()
     }
 
     func moveSelection(_ delta: Int) {
         guard !results.isEmpty else { return }
         select((selectedIndex + delta + results.count) % results.count)
+        isDocumentationPopoverPresented = true
     }
 
     /// The single entry point for changing the selection — from arrow keys, mouse hover, or a tap.
@@ -114,6 +120,7 @@ final class SymbolPickerViewModel: ObservableObject {
     func select(_ index: Int) {
         guard index != selectedIndex else { return }
         selectedIndex = index
+        isDocumentationPopoverPresented = false
         resetExplanation()
     }
 
@@ -129,6 +136,7 @@ final class SymbolPickerViewModel: ObservableObject {
     /// configured or nothing is selected. Safe to call repeatedly — a new call supersedes the old.
     func explain() {
         guard let client = llmClient, let symbol = selectedSymbol() else { return }
+        isDocumentationPopoverPresented = false
         explainTask?.cancel()
         // The bundled runtime is Apple-Silicon-only — fail clearly on Intel rather than spinning up
         // (and downloading a model for) a helper that can't exec here.

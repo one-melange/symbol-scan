@@ -75,27 +75,22 @@ import Foundation
         #expect(dir.injectionText == "src")
     }
 
-    // MARK: - docTooltip (T27)
+    // MARK: - documentationText (T27)
 
-    @Test func docTooltipIsNilWhenNoDoc() {
+    @Test func documentationTextUsesFallbackWhenNoDoc() {
         let sym = Symbol(name: "f", kind: .function, filePath: "a.swift", line: 1)
-        #expect(sym.docTooltip == nil)
+        #expect(sym.documentationText == "No documentation. Use ⌘E to analyze.")
     }
 
-    @Test func docTooltipIsFirstNonEmptyLineTrimmed() {
+    @Test func documentationTextKeepsTheFullDocAndTrimsOuterWhitespace() {
         let multiline = Symbol(name: "f", kind: .function, filePath: "a.swift", line: 1,
-                               doc: "Fetches the widget.\n\nUsed by the picker.")
-        #expect(multiline.docTooltip == "Fetches the widget.")
-
-        // Leading blank lines are skipped; surrounding whitespace is trimmed.
-        let padded = Symbol(name: "g", kind: .function, filePath: "a.swift", line: 1,
-                            doc: "\n   \n   Second line has the summary.   ")
-        #expect(padded.docTooltip == "Second line has the summary.")
+                               doc: "  Fetches the widget.\n\nUsed by the picker.  \n")
+        #expect(multiline.documentationText == "Fetches the widget.\n\nUsed by the picker.")
     }
 
-    @Test func docTooltipIsNilForWhitespaceOnlyDoc() {
+    @Test func documentationTextUsesFallbackForWhitespaceOnlyDoc() {
         let blank = Symbol(name: "h", kind: .function, filePath: "a.swift", line: 1,
                            doc: "   \n\t\n  ")
-        #expect(blank.docTooltip == nil)
+        #expect(blank.documentationText == Symbol.noDocumentationMessage)
     }
 }
