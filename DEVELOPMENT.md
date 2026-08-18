@@ -5,7 +5,7 @@
 ### 1. Stable code signing (keeps the Accessibility grant)
 
 SymbolScan needs Accessibility access for its global `CGEventTap`, text injection, and the
-bounded AX monitor that identifies the active Codex/Claude project. macOS ties that
+bounded AX probe that identifies the active Codex project. macOS ties that
 grant to the app's code signature, so an **ad-hoc** signed build loses the grant on every
 rebuild (the signature's hash changes) and re-prompts each run. Signing with a stable
 **Apple Development** identity fixes this — the grant then persists across rebuilds.
@@ -157,7 +157,7 @@ synchronized group, so new files are picked up automatically (no project edit ne
 
 | Permission | Required for | Where to grant |
 | --- | --- | --- |
-| Accessibility | Global hotkey, text injection, and bounded Codex/Claude workspace monitoring | System Settings → Privacy & Security → Accessibility |
+| Accessibility | Global hotkey, text injection, and bounded Codex project monitoring | System Settings → Privacy & Security → Accessibility |
 
 ---
 
@@ -175,19 +175,17 @@ synchronized group, so new files are picked up automatically (no project edit ne
 
 **Automatic repo detection does not switch projects**
 - Confirm **Detect Repo Automatically** is checked in the menu-bar menu.
-- Automatic detection currently supports Codex and Claude. Other apps intentionally keep the
+- Automatic detection currently supports Codex only. Other apps intentionally keep the
   current repo until a provider is added.
 - Choose the repo once with **Choose Repo…** if the app exposes only its project name. Names are
   resolved conservatively against known repos and are ignored when ambiguous; exact paths can
   discover a repo or worktree without prior selection.
-- While a supported app is active, SymbolScan listens for AX changes and also polls about every
-  0.8 seconds because Electron does not reliably emit every selection/layout notification. Each
-  scan remains node/depth/time bounded and runs off the main thread; failed or ambiguous scans keep
-  the current repo. The picker never waits for a scan before opening.
-- For live diagnosis, run a **Debug** build from Xcode, invoke the picker in Codex or Claude, and
-  filter the Xcode console for `SymbolScan AX TRACE`. The trace prints every visited node's
-  depth/role/identifier and captured string attributes, followed by known roots, extracted
-  candidates, and `RESOLVED ROOT`. Debug builds additionally print diagnostic-only `AXValue`
+- While Codex is active, SymbolScan polls its project-folder control about every 0.8 seconds. Each
+  probe is node/depth/time bounded, stops shortly after finding the selector, and runs off the main
+  thread; failed lookups keep the current repo. The picker never waits for a probe before opening.
+- For live diagnosis, run a **Debug** build from Xcode, invoke the picker in Codex, and filter the
+  Xcode console for `SymbolScan CODEX PROJECT`. The concise trace prints only selector evidence,
+  extracted candidates, and `RESOLVED`. Debug builds additionally print diagnostic-only `AXValue`
   fields (including editable prompt text), but those extra values stay out of candidate extraction
   so diagnostics do not change behavior. These values can include visible prompts or session text;
   do not share a trace without reviewing/redacting it.

@@ -7,21 +7,23 @@ import Testing
         let supportedBundleIdentifiers: Set<String>
         let output: [WorkspaceCandidate]
 
-        func candidates(from snapshot: AccessibilitySnapshot) -> [WorkspaceCandidate] { output }
+        func candidates(from snapshot: AccessibilitySnapshot, knownRoots: [URL])
+            -> [WorkspaceCandidate] { output }
     }
 
     private struct StaticReader: AccessibilitySnapshotReading {
         let snapshot: AccessibilitySnapshot
-        func read(processIdentifier: pid_t) -> AccessibilitySnapshot { snapshot }
+        func read(processIdentifier: pid_t, provider: any WorkspaceContextProvider,
+                  knownRoots: [URL]) -> AccessibilitySnapshot { snapshot }
     }
 
     private func makeDefaults() -> UserDefaults {
         UserDefaults(suiteName: "SymbolScanTests.\(UUID().uuidString)")!
     }
 
-    @Test func liveRegistryRecognizesCurrentCodexAndClaudeBundleIdentifiers() {
+    @Test func liveRegistryIsIntentionallyCodexOnly() {
         #expect(WorkspaceProviderRegistry.live.supports("com.openai.codex"))
-        #expect(WorkspaceProviderRegistry.live.supports("com.anthropic.claudefordesktop"))
+        #expect(!WorkspaceProviderRegistry.live.supports("com.anthropic.claudefordesktop"))
         #expect(!WorkspaceProviderRegistry.live.supports("com.apple.Terminal"))
 
         let detector = WorkspaceContextDetector()
@@ -30,16 +32,14 @@ import Testing
                                                              localizedName: "ChatGPT")) == "Codex")
     }
 
-    @Test func registryAcceptsAThirdAppWithoutDetectorChanges() async throws {
+    @Test func registryStillAcceptsAFutureTargetedProvider() async throws {
         let repo = try TestSupport.makeTempDir(prefix: "context-provider")
         defer { try? FileManager.default.removeItem(at: repo) }
         try TestSupport.runGit(["init", "-q"], in: repo)
 
-        let candidate = WorkspaceCandidate(value: repo.path, kind: .absolutePath,
-                                           source: .accessibilityLabel, confidence: 80)
         let registry = WorkspaceProviderRegistry(providers: [
             StaticProvider(supportedBundleIdentifiers: ["com.example.FutureTerminal"],
-                           output: [candidate])
+                           output: [WorkspaceCandidate(value: repo.path, kind: .path)])
         ])
         let detector = WorkspaceContextDetector(
             reader: StaticReader(snapshot: AccessibilitySnapshot(nodes: [])),
@@ -55,128 +55,82 @@ import Testing
         #expect(detected?.path == repo.resolvingSymlinksInPath().path)
     }
 
-    @Test func structuredDocumentURLBecomesHighConfidenceCandidate() {
+    @Test func structuredDocumentPathRemainsExactEvidence() {
         let snapshot = AccessibilitySnapshot(nodes: [
-            AccessibilityNodeSnapshot(depth: 3, role: "AXWebArea", subrole: nil, identifier: nil,
-                                      attributes: ["AXDocument": "file:///tmp/my-repo/file.swift"])
+            AccessibilityNodeSnapshot(depth: 3, role: "AXWebArea", identifier: nil,
+                                      attributes: ["AXDocument":
+                                        "file:///tmp/my-repo/file.swift"])
         ])
-        let candidates = CodexWorkspaceContextProvider().candidates(from: snapshot)
-
-        #expect(candidates == [WorkspaceCandidate(value: "file:///tmp/my-repo/file.swift",
-                                                  kind: .fileURL,
-                                                  source: .accessibilityDocument,
-                                                  confidence: 100)])
+        #expect(CodexWorkspaceContextProvider().candidates(from: snapshot, knownRoots: []) == [
+            WorkspaceCandidate(value: "file:///tmp/my-repo/file.swift", kind: .path)
+        ])
     }
 
-    @Test func arbitraryStaticTranscriptTextIsNeverAWorkspaceLabel() {
+    @Test func projectButtonCanExposeTheKnownRepoName() {
+        let root = URL(fileURLWithPath: "/tmp/symbol-scan")
         let snapshot = AccessibilitySnapshot(nodes: [
-            AccessibilityNodeSnapshot(depth: 2, role: "AXStaticText", subrole: nil,
-                                      identifier: nil,
-                                      attributes: ["AXTitle": "Please edit /Users/me/api"])
-        ])
-        #expect(ClaudeWorkspaceContextProvider().candidates(from: snapshot).isEmpty)
-    }
-
-    @Test func debugOnlyAXValuesCannotInfluenceCandidateExtraction() {
-        let snapshot = AccessibilitySnapshot(nodes: [
-            AccessibilityNodeSnapshot(depth: 2, role: "AXStaticText", subrole: nil,
-                                      identifier: nil, attributes: [:],
-                                      debugAttributes: ["AXValue": "/Users/me/secret-project"])
-        ])
-        #expect(CodexWorkspaceContextProvider().candidates(from: snapshot).isEmpty)
-    }
-
-    @Test func projectButtonCanContributeAConservativeDisplayName() {
-        let snapshot = AccessibilitySnapshot(nodes: [
-            AccessibilityNodeSnapshot(depth: 4, role: "AXButton", subrole: nil,
-                                      identifier: "project-selector",
+            AccessibilityNodeSnapshot(depth: 4, role: "AXButton", identifier: nil,
                                       attributes: ["AXTitle": "symbol-scan"])
         ])
-        #expect(CodexWorkspaceContextProvider().candidates(from: snapshot) == [
-            WorkspaceCandidate(value: "symbol-scan", kind: .displayName,
-                               source: .accessibilityLabel, confidence: 75)
+        #expect(CodexWorkspaceContextProvider().candidates(from: snapshot,
+                                                           knownRoots: [root]) == [
+            WorkspaceCandidate(value: "symbol-scan", kind: .displayName)
         ])
     }
 
-    @Test func genericWindowControlHelpIsNotWorkspaceEvidence() {
+    @Test func folderControlNeighborhoodFindsPopoverNameAndTildePath() {
         let snapshot = AccessibilitySnapshot(nodes: [
-            AccessibilityNodeSnapshot(depth: 1, role: "AXButton",
-                                      subrole: "AXFullScreenButton", identifier: nil,
-                                      attributes: ["AXHelp":
-                                        "this button also has an action to zoom the window"])
-        ])
-        #expect(CodexWorkspaceContextProvider().candidates(from: snapshot).isEmpty)
-    }
-
-    @Test func structuralLabelCanContainAnEmbeddedAbsolutePath() {
-        let snapshot = AccessibilitySnapshot(nodes: [
-            AccessibilityNodeSnapshot(depth: 4, role: "AXButton", subrole: nil,
-                                      identifier: "open-project",
-                                      attributes: ["AXDescription":
-                                                    "Open /Users/me/My Project — local checkout"])
-        ])
-        #expect(CodexWorkspaceContextProvider().candidates(from: snapshot).contains(
-            WorkspaceCandidate(value: "/Users/me/My Project", kind: .absolutePath,
-                               source: .accessibilityLabel, confidence: 80)
-        ))
-    }
-
-    @Test func clientSuffixInAWindowTitleStillContributesTheProjectName() {
-        let snapshot = AccessibilitySnapshot(nodes: [
-            AccessibilityNodeSnapshot(depth: 0, role: "AXWindow", subrole: nil,
+            AccessibilityNodeSnapshot(depth: 10, role: "AXGroup", identifier: nil,
+                                      attributes: [:]),
+            AccessibilityNodeSnapshot(parentIndex: 0, depth: 11, role: "AXButton",
+                                      identifier: "project-menu",
+                                      attributes: ["AXHelp": "Open project"]),
+            AccessibilityNodeSnapshot(parentIndex: 0, depth: 11, role: "AXImage", identifier: nil,
+                                      attributes: ["AXDescription": "Project folder"]),
+            AccessibilityNodeSnapshot(parentIndex: 0, depth: 11, role: "AXStaticText",
                                       identifier: nil,
-                                      attributes: ["AXTitle": "symbol-scan — Codex"])
+                                      attributes: ["AXValue": "symbol-scan"]),
+            AccessibilityNodeSnapshot(parentIndex: 0, depth: 11, role: "AXStaticText",
+                                      identifier: nil,
+                                      attributes: ["AXValue": "~/Code/symbol-scan"]),
+            AccessibilityNodeSnapshot(depth: 10, role: "AXGroup", identifier: nil,
+                                      attributes: [:]),
+            AccessibilityNodeSnapshot(parentIndex: 5, depth: 11, role: "AXStaticText",
+                                      identifier: nil,
+                                      attributes: ["AXValue": "/Users/me/wrong-transcript-path"]),
         ])
-        #expect(CodexWorkspaceContextProvider().candidates(from: snapshot).contains(
-            WorkspaceCandidate(value: "symbol-scan", kind: .displayName,
-                               source: .accessibilityLabel, confidence: 20)
-        ))
+        let candidates = CodexWorkspaceContextProvider().candidates(from: snapshot, knownRoots: [])
+
+        #expect(candidates.first == WorkspaceCandidate(value: "~/Code/symbol-scan", kind: .path))
+        #expect(candidates.contains(WorkspaceCandidate(value: "symbol-scan", kind: .displayName)))
+        #expect(!candidates.contains(WorkspaceCandidate(value: "/Users/me/wrong-transcript-path",
+                                                        kind: .path)))
     }
 
-    @Test func selectedDeepSessionPrefersItsProjectGroupOverOtherVisibleProjects() throws {
-        let repoA = try TestSupport.makeTempDir(prefix: "context-project-a")
-        let repoB = try TestSupport.makeTempDir(prefix: "context-project-b")
-        defer {
-            try? FileManager.default.removeItem(at: repoA)
-            try? FileManager.default.removeItem(at: repoB)
-        }
-        try TestSupport.runGit(["init", "-q"], in: repoA)
-        try TestSupport.runGit(["init", "-q"], in: repoB)
-
+    @Test func transcriptAndGenericWindowButtonsAreIgnored() {
+        let root = URL(fileURLWithPath: "/tmp/symbol-scan")
         let snapshot = AccessibilitySnapshot(nodes: [
-            AccessibilityNodeSnapshot(depth: 0, role: "AXWindow", subrole: nil,
-                                      identifier: nil, attributes: ["AXTitle": "ChatGPT"]),
-            AccessibilityNodeSnapshot(parentIndex: 0, depth: 7, role: "AXWebArea",
-                                      subrole: nil, identifier: nil,
-                                      attributes: ["AXTitle": "Codex"]),
-            AccessibilityNodeSnapshot(parentIndex: 1, depth: 12, role: "AXGroup",
-                                      subrole: nil, identifier: "project-group",
-                                      attributes: ["AXTitle": repoA.lastPathComponent]),
-            AccessibilityNodeSnapshot(parentIndex: 2, depth: 13, role: "AXHeading",
-                                      subrole: nil, identifier: nil,
-                                      attributes: ["AXValue": repoA.lastPathComponent]),
-            AccessibilityNodeSnapshot(parentIndex: 2, depth: 14, role: "AXRow",
-                                      subrole: nil, identifier: "session-row",
-                                      attributes: ["AXTitle": "Older task"]),
-            AccessibilityNodeSnapshot(parentIndex: 1, depth: 12, role: "AXGroup",
-                                      subrole: nil, identifier: "project-group",
-                                      attributes: ["AXTitle": repoB.lastPathComponent]),
-            AccessibilityNodeSnapshot(parentIndex: 5, depth: 13, role: "AXHeading",
-                                      subrole: nil, identifier: nil,
-                                      attributes: ["AXValue": repoB.lastPathComponent]),
-            AccessibilityNodeSnapshot(parentIndex: 5, depth: 14, role: "AXRow",
-                                      subrole: nil, identifier: "session-row",
-                                      attributes: ["AXTitle": "Current task",
-                                                   "AXSelected": "true"]),
+            AccessibilityNodeSnapshot(depth: 12, role: "AXStaticText", identifier: nil,
+                                      attributes: ["AXValue": "symbol-scan"]),
+            AccessibilityNodeSnapshot(depth: 1, role: "AXButton", identifier: nil,
+                                      attributes: ["AXHelp":
+                                        "this button also has an action to zoom the window"]),
         ])
+        #expect(CodexWorkspaceContextProvider().candidates(from: snapshot,
+                                                           knownRoots: [root]).isEmpty)
+    }
 
-        let candidates = CodexWorkspaceContextProvider().candidates(from: snapshot)
-        #expect(candidates.contains(WorkspaceCandidate(value: repoB.lastPathComponent,
-                                                       kind: .displayName,
-                                                       source: .accessibilityLabel,
-                                                       confidence: 92)))
-        #expect(RepoCandidateResolver.resolve(candidates, knownRoots: [repoA, repoB])?.path
-                == repoB.resolvingSymlinksInPath().path)
+    @Test func debugOnlyValuesCannotInfluenceDetection() {
+        let root = URL(fileURLWithPath: "/tmp/secret-project")
+        let snapshot = AccessibilitySnapshot(nodes: [
+            AccessibilityNodeSnapshot(depth: 2, role: "AXButton", identifier: "project-menu",
+                                      attributes: ["AXHelp": "Open project"],
+                                      debugAttributes: ["AXValue": "secret-project"])
+        ])
+        #expect(CodexWorkspaceContextProvider().candidates(from: snapshot,
+                                                           knownRoots: [root]) == [
+            WorkspaceCandidate(value: "Open project", kind: .displayName)
+        ])
     }
 
     @Test func exactPathFindsPreviouslyUnknownRepo() throws {
@@ -185,9 +139,10 @@ import Testing
         try TestSupport.runGit(["init", "-q"], in: repo)
         try TestSupport.write("let x = 1", to: "Sources/File.swift", in: repo)
 
-        let file = repo.appendingPathComponent("Sources/File.swift")
-        let candidate = WorkspaceCandidate(value: file.path, kind: .absolutePath,
-                                           source: .accessibilityDocument, confidence: 100)
+        let candidate = WorkspaceCandidate(
+            value: repo.appendingPathComponent("Sources/File.swift").path,
+            kind: .path
+        )
         #expect(RepoCandidateResolver.resolve([candidate], knownRoots: [])?.path
                 == repo.resolvingSymlinksInPath().path)
     }
@@ -197,8 +152,7 @@ import Testing
         defer { try? FileManager.default.removeItem(at: repo) }
         try TestSupport.runGit(["init", "-q"], in: repo)
 
-        let noTrailingSlash = URL(fileURLWithPath: repo.path)
-        #expect(RepoScanner.findRepoRoot(from: noTrailingSlash)?.path
+        #expect(RepoScanner.findRepoRoot(from: URL(fileURLWithPath: repo.path))?.path
                 == repo.resolvingSymlinksInPath().path)
     }
 
@@ -213,7 +167,7 @@ import Testing
                 == repo.resolvingSymlinksInPath().path)
     }
 
-    @Test func uniqueKnownDisplayNameResolvesButAmbiguousNameDoesNot() throws {
+    @Test func uniqueKnownDisplayNameResolvesButDuplicateNameDoesNot() throws {
         let baseA = try TestSupport.makeTempDir(prefix: "known-a")
         let baseB = try TestSupport.makeTempDir(prefix: "known-b")
         defer {
@@ -226,44 +180,18 @@ import Testing
         try FileManager.default.createDirectory(at: repoB, withIntermediateDirectories: true)
         try TestSupport.runGit(["init", "-q"], in: repoA)
         try TestSupport.runGit(["init", "-q"], in: repoB)
-        let candidate = WorkspaceCandidate(value: "api", kind: .displayName,
-                                           source: .accessibilityLabel, confidence: 50)
+        let candidate = WorkspaceCandidate(value: "api", kind: .displayName)
 
         #expect(RepoCandidateResolver.resolve([candidate], knownRoots: [repoA])?.path
                 == repoA.resolvingSymlinksInPath().path)
         #expect(RepoCandidateResolver.resolve([candidate], knownRoots: [repoA, repoB]) == nil)
     }
 
-    @Test func resolverRejectsConflictingReposAtOneConfidenceTier() throws {
-        let repoA = try TestSupport.makeTempDir(prefix: "context-tier-a")
-        let repoB = try TestSupport.makeTempDir(prefix: "context-tier-b")
-        defer {
-            try? FileManager.default.removeItem(at: repoA)
-            try? FileManager.default.removeItem(at: repoB)
-        }
-        try TestSupport.runGit(["init", "-q"], in: repoA)
-        try TestSupport.runGit(["init", "-q"], in: repoB)
-        let candidates = [repoA, repoB].map {
-            WorkspaceCandidate(value: $0.lastPathComponent, kind: .displayName,
-                               source: .accessibilityLabel, confidence: 35)
-        }
-
-        #expect(RepoCandidateResolver.resolve(candidates, knownRoots: [repoA, repoB]) == nil)
-    }
-
-    @Test func monitorAcceptsOnlyTheLatestResultForItsCurrentApp() {
-        #expect(WorkspaceMonitorResultPolicy.accepts(
-            generation: 4, currentGeneration: 4,
-            targetProcessIdentifier: 101, currentTargetProcessIdentifier: 101
-        ))
-        #expect(!WorkspaceMonitorResultPolicy.accepts(
-            generation: 3, currentGeneration: 4,
-            targetProcessIdentifier: 101, currentTargetProcessIdentifier: 101
-        ))
-        #expect(!WorkspaceMonitorResultPolicy.accepts(
-            generation: 4, currentGeneration: 4,
-            targetProcessIdentifier: 101, currentTargetProcessIdentifier: 202
-        ))
+    @Test func monitorRejectsAResultFromThePreviousApp() {
+        #expect(WorkspaceMonitorResultPolicy.accepts(targetProcessIdentifier: 101,
+                                                     currentTargetProcessIdentifier: 101))
+        #expect(!WorkspaceMonitorResultPolicy.accepts(targetProcessIdentifier: 101,
+                                                      currentTargetProcessIdentifier: 202))
     }
 
     @Test func sameCanonicalRootDoesNotReactivate() {
@@ -287,17 +215,12 @@ import Testing
         #expect(AutomaticRepoSwitchNotificationPreference.isEnabled(in: defaults))
         AutomaticRepoSwitchNotificationPreference.setEnabled(false, in: defaults)
         #expect(!AutomaticRepoSwitchNotificationPreference.isEnabled(in: defaults))
-        AutomaticRepoSwitchNotificationPreference.setEnabled(true, in: defaults)
-        #expect(AutomaticRepoSwitchNotificationPreference.isEnabled(in: defaults))
     }
 
     @Test func repoSwitchNotificationNamesTheAppAndBothRepos() {
         let previous = URL(fileURLWithPath: "/tmp/old-repo")
         let next = URL(fileURLWithPath: "/tmp/new-repo")
-
         #expect(RepoSwitchNotificationCopy.body(from: previous, to: next, appName: "Codex")
                 == "Codex: old-repo → new-repo")
-        #expect(RepoSwitchNotificationCopy.body(from: nil, to: next, appName: nil)
-                == "Using new-repo")
     }
 }

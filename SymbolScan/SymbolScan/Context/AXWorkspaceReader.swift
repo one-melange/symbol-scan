@@ -1,16 +1,14 @@
-import AppKit
 import ApplicationServices
 import Foundation
 import os
 
 nonisolated protocol AccessibilitySnapshotReading: Sendable {
-    func read(processIdentifier: pid_t) -> AccessibilitySnapshot
+    func read(processIdentifier: pid_t, provider: any WorkspaceContextProvider,
+              knownRoots: [URL]) -> AccessibilitySnapshot
 }
 
-/// A bounded, privacy-filtered AX traversal. Accessibility calls are synchronous IPC, so the reader
-/// is used exclusively from `WorkspaceContextDetector`'s background queue and has both a per-call
-/// messaging timeout and an overall traversal budget. Debug builds also retain AXValue solely for
-/// the explicit Xcode-console trace; it never enters provider candidate extraction.
+/// A deliberately small AX probe. It walks at most 180 elements and, once the app provider finds
+/// its target control, reads only enough following elements to cover that control's neighborhood.
 nonisolated final class AXWorkspaceReader: AccessibilitySnapshotReading, Sendable {
     private struct PendingNode {
         let element: AXUIElement
@@ -23,32 +21,30 @@ nonisolated final class AXWorkspaceReader: AccessibilitySnapshotReading, Sendabl
     private let timeBudget: TimeInterval
     private let messagingTimeout: Float
 
-    init(maxNodes: Int = 1_200, maxDepth: Int = 32, timeBudget: TimeInterval = 0.45,
-         messagingTimeout: Float = 0.08) {
+    init(maxNodes: Int = 180, maxDepth: Int = 20, timeBudget: TimeInterval = 0.18,
+         messagingTimeout: Float = 0.05) {
         self.maxNodes = maxNodes
         self.maxDepth = maxDepth
         self.timeBudget = timeBudget
         self.messagingTimeout = messagingTimeout
     }
 
-    func read(processIdentifier: pid_t) -> AccessibilitySnapshot {
+    func read(processIdentifier: pid_t, provider: any WorkspaceContextProvider,
+              knownRoots: [URL]) -> AccessibilitySnapshot {
         guard AXIsProcessTrusted() else { return AccessibilitySnapshot(nodes: []) }
-
         let app = AXUIElementCreateApplication(processIdentifier)
         AXUIElementSetMessagingTimeout(app, messagingTimeout)
-
         guard let window = elementAttribute(kAXFocusedWindowAttribute as String, from: app)
                 ?? elementAttribute(kAXMainWindowAttribute as String, from: app) else {
             return AccessibilitySnapshot(nodes: [])
         }
 
         let started = CFAbsoluteTimeGetCurrent()
-        // Depth-first preorder reaches Electron's deeply nested web content quickly and preserves
-        // parent indices. Starting from the window (rather than separately seeding the focused
-        // element) prevents a focused descendant from being recorded without its ancestry.
         var stack = [PendingNode(element: window, depth: 0, parentIndex: nil)]
         var visited = Set<CFHashCode>()
         var nodes: [AccessibilityNodeSnapshot] = []
+        var elements: [AXUIElement] = []
+        var nodesAfterAnchor: Int?
 
         while let pending = stack.popLast(), nodes.count < maxNodes,
               CFAbsoluteTimeGetCurrent() - started < timeBudget {
@@ -56,13 +52,19 @@ nonisolated final class AXWorkspaceReader: AccessibilitySnapshotReading, Sendabl
             guard visited.insert(hash).inserted else { continue }
 
             var parentForChildren = pending.parentIndex
-            if let snapshot = snapshot(pending.element, depth: pending.depth,
-                                       parentIndex: pending.parentIndex) {
+            if let node = snapshot(pending.element, depth: pending.depth,
+                                   parentIndex: pending.parentIndex) {
                 parentForChildren = nodes.count
-                nodes.append(snapshot)
+                nodes.append(node)
+                elements.append(pending.element)
+                if provider.isTraversalAnchor(node) {
+                    nodesAfterAnchor = min(nodesAfterAnchor ?? 24, 24)
+                } else if let remaining = nodesAfterAnchor {
+                    if remaining == 0 { break }
+                    nodesAfterAnchor = remaining - 1
+                }
             }
             guard pending.depth < maxDepth else { continue }
-
             let visible = elementArrayAttribute(kAXVisibleChildrenAttribute as String,
                                                 from: pending.element)
             let children = visible.isEmpty
@@ -73,97 +75,96 @@ nonisolated final class AXWorkspaceReader: AccessibilitySnapshotReading, Sendabl
                             parentIndex: parentForChildren)
             })
         }
-
+        let preliminary = AccessibilitySnapshot(nodes: nodes)
+        let evidence = provider.evidenceNodeIndices(in: preliminary, knownRoots: knownRoots)
+        for index in evidence where nodes.indices.contains(index) {
+            guard let value = stringValue(copiedAttribute(
+                CodexProjectSelectorLocator.valueAttribute, from: elements[index]
+            )), value.count <= 300 else { continue }
+            var attributes = nodes[index].attributes
+            attributes[CodexProjectSelectorLocator.valueAttribute] = value
+#if DEBUG
+            var debugAttributes = nodes[index].debugAttributes
+            debugAttributes[CodexProjectSelectorLocator.valueAttribute] = value
+#else
+            let debugAttributes: [String: String] = [:]
+#endif
+            nodes[index] = AccessibilityNodeSnapshot(
+                parentIndex: nodes[index].parentIndex,
+                depth: nodes[index].depth,
+                role: nodes[index].role,
+                identifier: nodes[index].identifier,
+                attributes: attributes,
+                debugAttributes: debugAttributes
+            )
+        }
         return AccessibilitySnapshot(nodes: nodes)
     }
 
     private func snapshot(_ element: AXUIElement, depth: Int,
                           parentIndex: Int?) -> AccessibilityNodeSnapshot? {
-        // Fetch the common attributes in one AX IPC round-trip. Reading them one by one lets a
-        // sluggish target consume one messaging timeout per attribute and occupy the detector's
-        // serial queue well beyond the traversal budget.
-        var attributes = [
+        let attributeNames = [
             kAXRoleAttribute as String,
-            kAXSubroleAttribute as String,
             kAXIdentifierAttribute as String,
-            AccessibilityWorkspaceCandidateExtractor.documentAttribute,
-            AccessibilityWorkspaceCandidateExtractor.urlAttribute,
-            AccessibilityWorkspaceCandidateExtractor.filenameAttribute,
-            AccessibilityWorkspaceCandidateExtractor.titleAttribute,
-            AccessibilityWorkspaceCandidateExtractor.descriptionAttribute,
-            AccessibilityWorkspaceCandidateExtractor.helpAttribute,
-            AccessibilityWorkspaceCandidateExtractor.selectedAttribute,
-            AccessibilityWorkspaceCandidateExtractor.focusedAttribute,
-            AccessibilityWorkspaceCandidateExtractor.expandedAttribute,
-            AccessibilityWorkspaceCandidateExtractor.domIdentifierAttribute,
-            AccessibilityWorkspaceCandidateExtractor.roleDescriptionAttribute,
+            CodexProjectSelectorLocator.documentAttribute,
+            CodexProjectSelectorLocator.urlAttribute,
+            CodexProjectSelectorLocator.filenameAttribute,
+            CodexProjectSelectorLocator.titleAttribute,
+            CodexProjectSelectorLocator.descriptionAttribute,
+            CodexProjectSelectorLocator.helpAttribute,
+            CodexProjectSelectorLocator.domIdentifierAttribute,
+            CodexProjectSelectorLocator.roleDescriptionAttribute,
         ]
-#if DEBUG
-        // The explicit diagnostic trace is the only mode that requests AXValue for every role.
-        // Production requests it separately only after the role is known to be navigation-safe.
-        attributes.append(AccessibilityWorkspaceCandidateExtractor.valueAttribute)
-#endif
-        let copied = copiedAttributes(attributes, from: element)
+        let copied = copiedAttributes(attributeNames, from: element)
         guard let role = stringValue(copied[kAXRoleAttribute as String]) else { return nil }
-        // Read short labels from roles Electron commonly uses for navigation. Editable text areas
-        // remain excluded so prompts are never provider input; DEBUG can still display them.
-        let safeValueRoles: Set<String> = [
-            "AXButton", "AXPopUpButton", "AXMenuButton", "AXRadioButton", "AXComboBox",
-            "AXStaticText", "AXHeading", "AXRow", "AXCell", "AXLink",
-            "AXDisclosureTriangle", "AXTab",
-        ]
-        var values: [String: String] = [:]
-        for attribute in attributes.dropFirst(3)
-            where attribute != AccessibilityWorkspaceCandidateExtractor.valueAttribute {
-            if let value = stringValue(copied[attribute]) { values[attribute] = value }
+
+        var attributes: [String: String] = [:]
+        for name in attributeNames.dropFirst(2)
+            where name != CodexProjectSelectorLocator.valueAttribute {
+            if let value = stringValue(copied[name]), value.count <= 300 {
+                attributes[name] = value
+            }
         }
-        if safeValueRoles.contains(role) {
-            let rawValue = copied[AccessibilityWorkspaceCandidateExtractor.valueAttribute]
-                ?? copiedAttribute(AccessibilityWorkspaceCandidateExtractor.valueAttribute,
-                                   from: element)
-            if let value = stringValue(rawValue), value.count <= 500 {
-                values[AccessibilityWorkspaceCandidateExtractor.valueAttribute] = value
+        let controlRoles: Set<String> = ["AXButton", "AXPopUpButton", "AXMenuButton"]
+        if controlRoles.contains(role) {
+            if let value = stringValue(copiedAttribute(
+                CodexProjectSelectorLocator.valueAttribute, from: element
+            )), value.count <= 300 {
+                attributes[CodexProjectSelectorLocator.valueAttribute] = value
             }
         }
 #if DEBUG
-        var debugValues = values
-        if let value = stringValue(copied[AccessibilityWorkspaceCandidateExtractor.valueAttribute]) {
-            debugValues[AccessibilityWorkspaceCandidateExtractor.valueAttribute] = value
-        }
+        let debugAttributes = attributes
 #else
-        let debugValues: [String: String] = [:]
+        let debugAttributes: [String: String] = [:]
 #endif
         return AccessibilityNodeSnapshot(
             parentIndex: parentIndex,
             depth: depth,
             role: role,
-            subrole: stringValue(copied[kAXSubroleAttribute as String]),
             identifier: stringValue(copied[kAXIdentifierAttribute as String]),
-            attributes: values,
-            debugAttributes: debugValues
+            attributes: attributes,
+            debugAttributes: debugAttributes
         )
     }
 
-    private func copiedAttributes(_ attributes: [String], from element: AXUIElement)
+    private func copiedAttributes(_ names: [String], from element: AXUIElement)
         -> [String: CFTypeRef] {
         var values: CFArray?
-        let names = attributes as CFArray
-        guard AXUIElementCopyMultipleAttributeValues(element, names, [], &values) == .success,
-              let values else { return [:] }
-
+        guard AXUIElementCopyMultipleAttributeValues(element, names as CFArray, [], &values)
+                == .success, let values else { return [:] }
         let array = values as NSArray
         var result: [String: CFTypeRef] = [:]
-        for (index, attribute) in attributes.enumerated() where index < array.count {
+        for (index, name) in names.enumerated() where index < array.count {
             let value = array[index] as CFTypeRef
-            guard CFGetTypeID(value) != CFNullGetTypeID() else { continue }
-            result[attribute] = value
+            if CFGetTypeID(value) != CFNullGetTypeID() { result[name] = value }
         }
         return result
     }
 
-    private func copiedAttribute(_ attribute: String, from element: AXUIElement) -> CFTypeRef? {
+    private func copiedAttribute(_ name: String, from element: AXUIElement) -> CFTypeRef? {
         var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else {
+        guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else {
             return nil
         }
         return value
@@ -172,30 +173,26 @@ nonisolated final class AXWorkspaceReader: AccessibilitySnapshotReading, Sendabl
     private func stringValue(_ value: CFTypeRef?) -> String? {
         guard let value else { return nil }
         if CFGetTypeID(value) == CFStringGetTypeID() { return value as? String }
-        if CFGetTypeID(value) == CFURLGetTypeID(), let url = value as? URL { return url.absoluteString }
-        if CFGetTypeID(value) == CFBooleanGetTypeID(), let bool = value as? Bool {
-            return bool ? "true" : "false"
-        }
-        if CFGetTypeID(value) == CFNumberGetTypeID(), let number = value as? NSNumber {
-            return number.stringValue
+        if CFGetTypeID(value) == CFURLGetTypeID(), let url = value as? URL {
+            return url.absoluteString
         }
         return nil
     }
 
-    private func elementAttribute(_ attribute: String, from element: AXUIElement) -> AXUIElement? {
-        guard let value = copiedAttribute(attribute, from: element),
+    private func elementAttribute(_ name: String, from element: AXUIElement) -> AXUIElement? {
+        guard let value = copiedAttribute(name, from: element),
               CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
         return unsafeBitCast(value, to: AXUIElement.self)
     }
 
-    private func elementArrayAttribute(_ attribute: String, from element: AXUIElement) -> [AXUIElement] {
+    private func elementArrayAttribute(_ name: String, from element: AXUIElement) -> [AXUIElement] {
         var count: CFIndex = 0
-        guard AXUIElementGetAttributeValueCount(element, attribute as CFString, &count) == .success,
+        guard AXUIElementGetAttributeValueCount(element, name as CFString, &count) == .success,
               count > 0 else { return [] }
         var values: CFArray?
-        let requested = min(count, 250)
-        guard AXUIElementCopyAttributeValues(element, attribute as CFString, 0, requested, &values) == .success,
-              let values else { return [] }
+        let requested = min(count, 80)
+        guard AXUIElementCopyAttributeValues(element, name as CFString, 0, requested, &values)
+                == .success, let values else { return [] }
         return (values as NSArray).compactMap { value in
             let cf = value as CFTypeRef
             guard CFGetTypeID(cf) == AXUIElementGetTypeID() else { return nil }
@@ -204,8 +201,7 @@ nonisolated final class AXWorkspaceReader: AccessibilitySnapshotReading, Sendabl
     }
 }
 
-/// Runs AX IPC and repository resolution away from the main actor. The registry is injected so a
-/// new provider can be proven end-to-end in tests without modifying this detector.
+/// Routes a supported app to its provider and keeps all AX IPC off the main actor.
 nonisolated final class WorkspaceContextDetector {
     private let reader: any AccessibilitySnapshotReading
     private let registry: WorkspaceProviderRegistry
@@ -231,22 +227,24 @@ nonisolated final class WorkspaceContextDetector {
             completion(nil)
             return
         }
-
         queue.async { [reader] in
             let started = CFAbsoluteTimeGetCurrent()
-            let snapshot = reader.read(processIdentifier: app.processIdentifier)
-            let candidates = provider.candidates(from: snapshot)
+            let snapshot = reader.read(processIdentifier: app.processIdentifier,
+                                       provider: provider, knownRoots: knownRoots)
+            let candidates = provider.candidates(from: snapshot, knownRoots: knownRoots)
             let root = RepoCandidateResolver.resolve(candidates, knownRoots: knownRoots)
-            let elapsedMS = Int((CFAbsoluteTimeGetCurrent() - started) * 1000)
+            let elapsedMS = Int((CFAbsoluteTimeGetCurrent() - started) * 1_000)
             if trace || root != nil {
-                Log.context.debug("Workspace detection for \(app.bundleIdentifier, privacy: .public): \(snapshot.nodes.count) nodes, \(candidates.count) candidates, \(elapsedMS)ms, matched=\(root != nil, privacy: .public)")
+                Log.context.debug("Codex project probe: \(snapshot.nodes.count) nodes, \(elapsedMS)ms, matched=\(root != nil, privacy: .public)")
             }
             completion(root)
 #if DEBUG
             if trace {
                 WorkspaceContextDebugTrace.dump(app: app, snapshot: snapshot,
-                                                candidates: candidates, knownRoots: knownRoots,
-                                                resolvedRoot: root, elapsedMS: elapsedMS)
+                                                evidence: provider.evidenceNodeIndices(
+                                                    in: snapshot, knownRoots: knownRoots),
+                                                candidates: candidates, resolvedRoot: root,
+                                                elapsedMS: elapsedMS)
             }
 #endif
         }
@@ -254,56 +252,29 @@ nonisolated final class WorkspaceContextDetector {
 }
 
 #if DEBUG
-/// Intentionally verbose, DEBUG-only diagnostics for live AX reverse-engineering. Values are public
-/// in Console so project/session labels are readable; prompts or other visible text may also appear.
 nonisolated private enum WorkspaceContextDebugTrace {
-    private static let valueLimit = 600
-
     static func dump(app: RunningAppIdentity, snapshot: AccessibilitySnapshot,
-                     candidates: [WorkspaceCandidate], knownRoots: [URL],
+                     evidence: [Int], candidates: [WorkspaceCandidate],
                      resolvedRoot: URL?, elapsedMS: Int) {
-        Log.context.notice("===== SymbolScan AX TRACE BEGIN app=\(app.bundleIdentifier, privacy: .public) pid=\(app.processIdentifier, privacy: .public) nodes=\(snapshot.nodes.count, privacy: .public) elapsed=\(elapsedMS, privacy: .public)ms =====")
-
-        for (index, node) in snapshot.nodes.enumerated() {
-            let subrole = node.subrole ?? "-"
-            let identifier = node.identifier.map(quoted) ?? "-"
-            let attributes = node.debugAttributes.keys.sorted().map { key in
-                "\(key)=\(quoted(node.debugAttributes[key] ?? ""))"
+        Log.context.notice("===== SymbolScan CODEX PROJECT TRACE app=\(app.bundleIdentifier, privacy: .public) visited=\(snapshot.nodes.count, privacy: .public) evidence=\(evidence.count, privacy: .public) elapsed=\(elapsedMS, privacy: .public)ms =====")
+        for index in evidence {
+            let node = snapshot.nodes[index]
+            let values = node.debugAttributes.keys.sorted().map {
+                "\($0)=\(quoted(node.debugAttributes[$0] ?? ""))"
             }.joined(separator: " ")
-            Log.context.notice("SymbolScan AX TRACE AX[\(index, privacy: .public)] parent=\(node.parentIndex.map(String.init) ?? "-", privacy: .public) depth=\(node.depth, privacy: .public) role=\(node.role, privacy: .public) subrole=\(subrole, privacy: .public) id=\(identifier, privacy: .public) \(attributes, privacy: .public)")
+            Log.context.notice("SymbolScan CODEX PROJECT AX[\(index, privacy: .public)] depth=\(node.depth, privacy: .public) role=\(node.role, privacy: .public) id=\(node.identifier ?? "-", privacy: .public) \(values, privacy: .public)")
         }
-
-        if knownRoots.isEmpty {
-            Log.context.notice("SymbolScan AX TRACE KNOWN ROOTS: <none>")
-        } else {
-            for (index, root) in knownRoots.enumerated() {
-                Log.context.notice("SymbolScan AX TRACE KNOWN ROOT[\(index, privacy: .public)]: \(root.path, privacy: .public)")
-            }
+        for candidate in candidates {
+            Log.context.notice("SymbolScan CODEX PROJECT CANDIDATE kind=\(String(describing: candidate.kind), privacy: .public) value=\(quoted(candidate.value), privacy: .public)")
         }
-
-        if candidates.isEmpty {
-            Log.context.notice("SymbolScan AX TRACE CANDIDATES: <none>")
-        } else {
-            for (index, candidate) in candidates.enumerated() {
-                Log.context.notice("SymbolScan AX TRACE CANDIDATE[\(index, privacy: .public)] kind=\(String(describing: candidate.kind), privacy: .public) source=\(String(describing: candidate.source), privacy: .public) confidence=\(candidate.confidence, privacy: .public) value=\(quoted(candidate.value), privacy: .public)")
-            }
-        }
-
-        Log.context.notice("SymbolScan AX TRACE RESOLVED ROOT: \(resolvedRoot?.path ?? "<none>", privacy: .public)")
-        Log.context.notice("===== SymbolScan AX TRACE END =====")
+        Log.context.notice("SymbolScan CODEX PROJECT RESOLVED: \(resolvedRoot?.path ?? "<none>", privacy: .public)")
+        Log.context.notice("===== SymbolScan CODEX PROJECT TRACE END =====")
     }
 
     private static func quoted(_ value: String) -> String {
-        var escaped = value
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\n", with: "\\n")
-            .replacingOccurrences(of: "\r", with: "\\r")
-            .replacingOccurrences(of: "\t", with: "\\t")
+        let escaped = value.replacingOccurrences(of: "\n", with: "\\n")
             .replacingOccurrences(of: "\"", with: "\\\"")
-        if escaped.count > valueLimit {
-            escaped = String(escaped.prefix(valueLimit)) + "…<truncated>"
-        }
-        return "\"\(escaped)\""
+        return "\"\(escaped.prefix(300))\""
     }
 }
 #endif

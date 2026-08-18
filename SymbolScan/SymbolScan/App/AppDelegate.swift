@@ -266,7 +266,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func requestPermissions() {
         // Accessibility — required for the global CGEventTap, text injection, and bounded AX
-        // monitoring that identifies the active Codex/Claude workspace.
+        // monitoring that identifies the active Codex project.
         let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeRetainedValue(): true]
         let trusted = AXIsProcessTrustedWithOptions(options)
         if !trusted {

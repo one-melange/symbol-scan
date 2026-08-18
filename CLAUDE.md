@@ -18,10 +18,10 @@ A trigger flows through the subsystems like this:
 ```
 EventTap (global CGEventTap; configurable hotkey)
   └─> AppDelegate (owns EventTap, SymbolIndex, OverlayWindowController)
-        ├─> WorkspaceContextMonitor (AX notifications + bounded polling)
+        ├─> WorkspaceContextMonitor (lightweight polling)
         │     └─> WorkspaceContextDetector
         │           └─> per-app provider → bounded AX snapshot → RepoCandidateResolver
-        │           (Codex + Claude today; registry extension point for terminal apps)
+        │           (Codex project selector today; registry extension point for terminal apps)
         └─> OverlayWindow + SymbolPickerView / SymbolPickerViewModel  (the picker UI)
               └─> SymbolIndex.search → SymbolMatcher  (strict-substring ranking)
                     ▲

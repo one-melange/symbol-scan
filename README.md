@@ -46,8 +46,8 @@ The trigger is configurable via the menu bar item for the app.
   Rust, and Go.
 - **Files and directories too** — every tracked file and directory is searchable/injectable
   as a path, alongside in-file symbols.
-- **Automatic repo context** — while Codex or Claude is active, a bounded macOS Accessibility
-  monitor identifies project changes and switches the symbol index in the background. An open
+- **Automatic repo context** — while Codex is active, a bounded macOS Accessibility probe reads
+  its project-folder control and switches the symbol index in the background. An open
   picker refreshes immediately; a closed picker is already warm for the next hotkey. Unsupported
   apps keep the current repo. Detection and desktop notifications for successful automatic
   switches have independent menu-bar toggles.
@@ -87,7 +87,7 @@ cd symbol-scan
    → enable **SymbolScan**). This is required for the global hotkey, text injection, and
    automatic repo detection.
 5. From the menu-bar item, choose a git repo to index (**Choose Repo…**) as your fallback.
-   As you move between projects in Codex or Claude, SymbolScan detects the active project in the
+   As you move between projects in Codex, SymbolScan detects the active project in the
    background; other apps continue using the current repo.
 
 ## Install it (run outside Xcode)
@@ -125,7 +125,7 @@ flowchart TD
 
     Trigger --> App
     App --> Monitor
-    Monitor -->|Codex or Claude| Context --> Resolver -->|activate matching repo| App
+    Monitor -->|Codex| Context --> Resolver -->|activate matching repo| App
     App --> OWC
     OWC --> View --> VM --> Index
     OWC -->|on pick| Injector
@@ -135,9 +135,9 @@ flowchart TD
     Parser -->|builds| Index
 ```
 
-While a supported app is frontmost, AX change notifications trigger debounced scans and a short
-poll is the fallback for Electron changes that do not emit reliable notifications. Every traversal
-is time/node/depth bounded; snapshots are not persisted, and Release builds do not log AX text.
+While Codex is frontmost, a short poll checks its project selector. The probe stops shortly after
+finding that control and is time/node/depth bounded; snapshots are not persisted, and Release
+builds do not log AX text.
 App-specific providers are registered separately from the monitor, traversal, and shared resolver,
 leaving a narrow extension point for Terminal, iTerm, Ghostty, or other apps that can expose a
 focused tab's working directory in the future.
