@@ -77,6 +77,15 @@ import Testing
         #expect(ClaudeWorkspaceContextProvider().candidates(from: snapshot).isEmpty)
     }
 
+    @Test func debugOnlyAXValuesCannotInfluenceCandidateExtraction() {
+        let snapshot = AccessibilitySnapshot(nodes: [
+            AccessibilityNodeSnapshot(depth: 2, role: "AXStaticText", subrole: nil,
+                                      identifier: nil, attributes: [:],
+                                      debugAttributes: ["AXValue": "/Users/me/secret-project"])
+        ])
+        #expect(CodexWorkspaceContextProvider().candidates(from: snapshot).isEmpty)
+    }
+
     @Test func projectButtonCanContributeAConservativeDisplayName() {
         let snapshot = AccessibilitySnapshot(nodes: [
             AccessibilityNodeSnapshot(depth: 4, role: "AXButton", subrole: nil,

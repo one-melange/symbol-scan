@@ -17,6 +17,19 @@ nonisolated struct AccessibilityNodeSnapshot: Equatable, Sendable {
     let subrole: String?
     let identifier: String?
     let attributes: [String: String]
+    /// Extra scalar values captured only by DEBUG builds for the Xcode-console AX trace. Release
+    /// builds leave this empty and never request potentially sensitive text-element values.
+    let debugAttributes: [String: String]
+
+    init(depth: Int, role: String, subrole: String?, identifier: String?,
+         attributes: [String: String], debugAttributes: [String: String] = [:]) {
+        self.depth = depth
+        self.role = role
+        self.subrole = subrole
+        self.identifier = identifier
+        self.attributes = attributes
+        self.debugAttributes = debugAttributes
+    }
 }
 
 nonisolated struct AccessibilitySnapshot: Equatable, Sendable {

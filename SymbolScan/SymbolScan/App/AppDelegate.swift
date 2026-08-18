@@ -77,7 +77,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// before the first ⌘E; observed by the picker + menu bar for progress.
     private var modelProvisioner: ModelProvisioner?
     /// Resolves a supported frontmost app's focused AX hierarchy into a verified git root. AX IPC
-    /// runs on its own queue; this object never observes apps continuously or records raw UI text.
+    /// runs on its own queue and never observes apps continuously. Debug builds emit an explicit
+    /// raw-value AX trace for live diagnosis; Release builds retain the privacy-filtered snapshot.
     private let workspaceContextDetector = WorkspaceContextDetector()
     /// Monotonic request identity. A timeout, newer trigger, or manual repo selection clears the
     /// pending id so a late AX result cannot open a second picker or override explicit user intent.

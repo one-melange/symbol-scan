@@ -182,6 +182,12 @@ synchronized group, so new files are picked up automatically (no project edit ne
   discover a repo or worktree without prior selection.
 - Detection has a 250 ms deadline. If AX data is unavailable or late, the picker opens against
   the current repo instead of blocking.
+- For live diagnosis, run a **Debug** build from Xcode, invoke the picker in Codex or Claude, and
+  filter the Xcode console for `SymbolScan AX TRACE`. The trace prints every visited node's
+  depth/role/identifier and captured string attributes, followed by known roots, extracted
+  candidates, and `RESOLVED ROOT`. Debug builds additionally print `AXValue` from text elements,
+  but keep it out of candidate extraction so diagnostics do not change behavior. These values can
+  include visible prompts or session text; do not share a trace without reviewing/redacting it.
 
 **Automatic repo-switch notification does not appear**
 - Confirm **Notify on Automatic Repo Switch** is checked in the menu-bar menu and notifications
