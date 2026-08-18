@@ -5,7 +5,7 @@
 ### 1. Stable code signing (keeps the Accessibility grant)
 
 SymbolScan needs Accessibility access for its global `CGEventTap`, text injection, and the
-on-demand AX lookup that identifies the active Codex/Claude project. macOS ties that
+bounded AX monitor that identifies the active Codex/Claude project. macOS ties that
 grant to the app's code signature, so an **ad-hoc** signed build loses the grant on every
 rebuild (the signature's hash changes) and re-prompts each run. Signing with a stable
 **Apple Development** identity fixes this — the grant then persists across rebuilds.
@@ -157,7 +157,7 @@ synchronized group, so new files are picked up automatically (no project edit ne
 
 | Permission | Required for | Where to grant |
 | --- | --- | --- |
-| Accessibility | Global hotkey, text injection, and bounded on-demand Codex/Claude workspace lookup | System Settings → Privacy & Security → Accessibility |
+| Accessibility | Global hotkey, text injection, and bounded Codex/Claude workspace monitoring | System Settings → Privacy & Security → Accessibility |
 
 ---
 
@@ -180,14 +180,17 @@ synchronized group, so new files are picked up automatically (no project edit ne
 - Choose the repo once with **Choose Repo…** if the app exposes only its project name. Names are
   resolved conservatively against known repos and are ignored when ambiguous; exact paths can
   discover a repo or worktree without prior selection.
-- Detection has a 250 ms deadline. If AX data is unavailable or late, the picker opens against
-  the current repo instead of blocking.
+- While a supported app is active, SymbolScan listens for AX changes and also polls about every
+  0.8 seconds because Electron does not reliably emit every selection/layout notification. Each
+  scan remains node/depth/time bounded and runs off the main thread; failed or ambiguous scans keep
+  the current repo. The picker never waits for a scan before opening.
 - For live diagnosis, run a **Debug** build from Xcode, invoke the picker in Codex or Claude, and
   filter the Xcode console for `SymbolScan AX TRACE`. The trace prints every visited node's
   depth/role/identifier and captured string attributes, followed by known roots, extracted
-  candidates, and `RESOLVED ROOT`. Debug builds additionally print `AXValue` from text elements,
-  but keep it out of candidate extraction so diagnostics do not change behavior. These values can
-  include visible prompts or session text; do not share a trace without reviewing/redacting it.
+  candidates, and `RESOLVED ROOT`. Debug builds additionally print diagnostic-only `AXValue`
+  fields (including editable prompt text), but those extra values stay out of candidate extraction
+  so diagnostics do not change behavior. These values can include visible prompts or session text;
+  do not share a trace without reviewing/redacting it.
 
 **Automatic repo-switch notification does not appear**
 - Confirm **Notify on Automatic Repo Switch** is checked in the menu-bar menu and notifications

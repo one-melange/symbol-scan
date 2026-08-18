@@ -85,6 +85,8 @@ class OverlayWindowController: NSWindowController {
     var onChooseRepo: (() -> Void)?
     /// Invoked when the user asks to rescan the active repo (⌘R or the in-picker action).
     var onReindex: (() -> Void)?
+    /// Keeps workspace monitoring pinned to the originating coding app while SymbolScan is active.
+    var onVisibilityChanged: ((Bool, NSRunningApplication?) -> Void)?
 
     init(index: SymbolIndex,
          llmClient: (any LLMClient)? = nil,
@@ -112,7 +114,7 @@ class OverlayWindowController: NSWindowController {
     func show(match: HotkeyMatch, targetApp: NSRunningApplication? = nil) {
         guard let screen = NSScreen.main else { return }
 
-        // AppDelegate captures this before its bounded AX lookup and before we activate ourselves.
+        // AppDelegate captures this before we activate ourselves.
         // Ignore ourselves (e.g. re-trigger while the overlay is already up), preserving the prior
         // target so injection still returns to the original coding app.
         if targetApp?.bundleIdentifier != Bundle.main.bundleIdentifier {
@@ -163,9 +165,11 @@ class OverlayWindowController: NSWindowController {
         NSApp.activate(ignoringOtherApps: true)
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
+        onVisibilityChanged?(true, previousApp)
     }
 
     func hide() {
+        let wasVisible = window?.isVisible == true
         // Cancel any in-flight explanation before dropping the view model — releasing the last
         // reference does NOT cancel its `explainTask`, so generation would otherwise keep running
         // (and burning model resources) invisibly after the overlay closes.
@@ -173,6 +177,7 @@ class OverlayWindowController: NSWindowController {
         viewModel?.resetExplanation()
         window?.orderOut(nil)
         viewModel = nil
+        if wasVisible { onVisibilityChanged?(false, previousApp) }
     }
 
     /// Resize the overlay between the compact picker and the taller explanation layout, re-pinning it

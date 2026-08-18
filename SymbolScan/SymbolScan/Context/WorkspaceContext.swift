@@ -12,17 +12,19 @@ nonisolated struct RunningAppIdentity: Equatable, Sendable {
 /// records only structural metadata and the small set of attributes providers can use to identify
 /// a workspace; it never stores the complete AX attribute dictionary.
 nonisolated struct AccessibilityNodeSnapshot: Equatable, Sendable {
+    let parentIndex: Int?
     let depth: Int
     let role: String
     let subrole: String?
     let identifier: String?
     let attributes: [String: String]
     /// Extra scalar values captured only by DEBUG builds for the Xcode-console AX trace. Release
-    /// builds leave this empty and never request potentially sensitive text-element values.
+    /// builds leave this empty and never request editable text-area values.
     let debugAttributes: [String: String]
 
-    init(depth: Int, role: String, subrole: String?, identifier: String?,
+    init(parentIndex: Int? = nil, depth: Int, role: String, subrole: String?, identifier: String?,
          attributes: [String: String], debugAttributes: [String: String] = [:]) {
+        self.parentIndex = parentIndex
         self.depth = depth
         self.role = role
         self.subrole = subrole
@@ -115,9 +117,10 @@ nonisolated struct ClaudeWorkspaceContextProvider: WorkspaceContextProvider {
     }
 }
 
-/// Conservative extraction shared by the first two Electron clients. Structured document/URL
-/// attributes are strongest. Human-readable labels are considered only on structural controls —
-/// never arbitrary static text or editable values, which could be a prompt or chat transcript.
+/// Selection-aware extraction shared by the first two Electron clients. Structured document/URL
+/// attributes remain strongest. Selected controls, their ancestors, and the nearest preceding
+/// heading receive progressively lower confidence; all other short visible labels are weak fallback
+/// evidence only. The resolver requires a unique known repo at each confidence tier.
 nonisolated enum AccessibilityWorkspaceCandidateExtractor {
     static let documentAttribute = "AXDocument"
     static let urlAttribute = "AXURL"
@@ -126,16 +129,27 @@ nonisolated enum AccessibilityWorkspaceCandidateExtractor {
     static let descriptionAttribute = "AXDescription"
     static let helpAttribute = "AXHelp"
     static let valueAttribute = "AXValue"
+    static let selectedAttribute = "AXSelected"
+    static let focusedAttribute = "AXFocused"
+    static let expandedAttribute = "AXExpanded"
+    static let domIdentifierAttribute = "AXDOMIdentifier"
+    static let roleDescriptionAttribute = "AXRoleDescription"
 
     private static let labelAttributes = [titleAttribute, descriptionAttribute, helpAttribute,
                                           valueAttribute]
-    private static let structuralLabelRoles: Set<String> = [
+    private static let labelRoles: Set<String> = [
         "AXWindow", "AXButton", "AXPopUpButton", "AXMenuButton", "AXRadioButton",
         "AXComboBox", "AXGroup", "AXHeading", "AXRow", "AXCell", "AXLink", "AXWebArea",
+        "AXStaticText", "AXDisclosureTriangle", "AXTab", "AXList", "AXOutline",
+    ]
+    private static let controlRoles: Set<String> = [
+        "AXButton", "AXPopUpButton", "AXMenuButton", "AXRadioButton", "AXComboBox",
+        "AXDisclosureTriangle", "AXTab",
     ]
     private static let contextHints = [
         "project", "workspace", "repository", "repo", "folder", "working directory", "cwd",
     ]
+    private static let selectionHints = ["selected", "active", "current", "aria-current"]
 
     static func extract(from snapshot: AccessibilitySnapshot) -> [WorkspaceCandidate] {
         var candidates: [WorkspaceCandidate] = []
@@ -147,30 +161,117 @@ nonisolated enum AccessibilityWorkspaceCandidateExtractor {
                              to: &candidates)
             appendStructured(node.attributes[filenameAttribute], source: .accessibilityFilename,
                              to: &candidates)
+        }
 
-            guard node.depth <= 6, structuralLabelRoles.contains(node.role) else { continue }
-            let structuralText = ([node.identifier, node.attributes[descriptionAttribute],
-                                   node.attributes[helpAttribute]] as [String?])
-                .compactMap { $0?.lowercased() }
-                .joined(separator: " ")
-            let isContextControl = node.role == "AXWindow" || node.role == "AXHeading"
-                || contextHints.contains(where: structuralText.contains)
-                || ["AXButton", "AXPopUpButton", "AXMenuButton", "AXComboBox"].contains(node.role)
+        let selectedIndices = snapshot.nodes.indices.filter {
+            isSelected(snapshot.nodes[$0]) || hasSelectionHint(snapshot.nodes[$0])
+        }
+        for index in selectedIndices {
+            appendLabels(of: snapshot.nodes[index], confidence: 95, to: &candidates)
 
-            guard isContextControl else { continue }
-            for attribute in labelAttributes {
-                guard let value = node.attributes[attribute] else { continue }
-                appendLabel(value, to: &candidates)
+            var ancestor = snapshot.nodes[index].parentIndex
+            var confidence = 92
+            while let ancestorIndex = ancestor, snapshot.nodes.indices.contains(ancestorIndex) {
+                appendLabels(of: snapshot.nodes[ancestorIndex], confidence: confidence,
+                             to: &candidates)
+                ancestor = snapshot.nodes[ancestorIndex].parentIndex
+                confidence = max(82, confidence - 2)
+            }
+
+            if let heading = nearestPrecedingHeading(before: index, in: snapshot.nodes) {
+                appendLabels(of: heading, confidence: 88, to: &candidates)
             }
         }
 
-        // AX bridges sometimes expose the same string at the web area, window, and control. Preserve
-        // the first (highest-priority traversal order) and avoid making ambiguity from duplicates.
+        for node in snapshot.nodes where labelRoles.contains(node.role) {
+            let metadata = contextMetadata(node)
+            let hasContextHint = contextHints.contains(where: metadata.contains)
+            // Generic Electron chrome (for example the macOS zoom button's help text) is not
+            // workspace evidence. Controls must identify themselves as project/workspace UI or
+            // be selected, in which case they were already emitted above at stronger confidence.
+            if controlRoles.contains(node.role), !hasContextHint,
+               !isSelected(node), !hasSelectionHint(node) {
+                continue
+            }
+            let confidence: Int
+            if hasContextHint {
+                confidence = 75
+            } else if node.role == "AXHeading" {
+                confidence = 55
+            } else if node.role == "AXWindow" || node.role == "AXWebArea" {
+                confidence = 25
+            } else {
+                confidence = 35
+            }
+            appendLabels(of: node, confidence: confidence, to: &candidates)
+        }
+
+        // Retain the strongest occurrence of each value. A project label is often repeated at its
+        // heading, group, selected row, and web-area title.
+        let ordered = candidates.enumerated().sorted {
+            if $0.element.confidence == $1.element.confidence { return $0.offset < $1.offset }
+            return $0.element.confidence > $1.element.confidence
+        }.map(\.element)
         var seen = Set<String>()
-        return candidates.filter {
-            let key = "\($0.kind)-\($0.value)"
+        return ordered.filter {
+            let key = "\($0.kind)-\($0.value.lowercased())"
             return seen.insert(key).inserted
         }
+    }
+
+    private static func isSelected(_ node: AccessibilityNodeSnapshot) -> Bool {
+        node.attributes[selectedAttribute] == "true"
+            || (node.attributes[focusedAttribute] == "true" && node.role != "AXTextArea")
+    }
+
+    private static func hasSelectionHint(_ node: AccessibilityNodeSnapshot) -> Bool {
+        let metadata = ([node.identifier, node.attributes[domIdentifierAttribute],
+                         node.attributes[descriptionAttribute]] as [String?])
+            .compactMap { $0?.lowercased() }
+            .joined(separator: " ")
+        return selectionHints.contains(where: metadata.contains)
+    }
+
+    private static func contextMetadata(_ node: AccessibilityNodeSnapshot) -> String {
+        ([node.identifier, node.attributes[domIdentifierAttribute],
+          node.attributes[descriptionAttribute], node.attributes[helpAttribute],
+          node.attributes[roleDescriptionAttribute]] as [String?])
+            .compactMap { $0?.lowercased() }
+            .joined(separator: " ")
+    }
+
+    private static func nearestPrecedingHeading(before index: Int,
+                                                in nodes: [AccessibilityNodeSnapshot])
+        -> AccessibilityNodeSnapshot? {
+        guard index > 0 else { return nil }
+        var ancestorIndices = Set<Int>()
+        var ancestor = nodes[index].parentIndex
+        while let ancestorIndex = ancestor, nodes.indices.contains(ancestorIndex),
+              ancestorIndices.insert(ancestorIndex).inserted {
+            ancestor = nodes[ancestorIndex].parentIndex
+        }
+        let lowerBound = max(0, index - 80)
+        for candidateIndex in stride(from: index - 1, through: lowerBound, by: -1) {
+            let candidate = nodes[candidateIndex]
+            let belongsToSelectedBranch = ancestorIndices.contains(candidateIndex)
+                || candidate.parentIndex.map(ancestorIndices.contains) == true
+            if candidate.role == "AXHeading", belongsToSelectedBranch,
+               !labels(of: candidate).isEmpty {
+                return candidate
+            }
+        }
+        return nil
+    }
+
+    private static func appendLabels(of node: AccessibilityNodeSnapshot, confidence: Int,
+                                     to candidates: inout [WorkspaceCandidate]) {
+        for value in labels(of: node) {
+            appendLabel(value, confidence: confidence, to: &candidates)
+        }
+    }
+
+    private static func labels(of node: AccessibilityNodeSnapshot) -> [String] {
+        labelAttributes.compactMap { node.attributes[$0] }
     }
 
     private static func appendStructured(_ raw: String?, source: WorkspaceCandidateSource,
@@ -185,14 +286,20 @@ nonisolated enum AccessibilityWorkspaceCandidateExtractor {
         }
     }
 
-    private static func appendLabel(_ raw: String, to candidates: inout [WorkspaceCandidate]) {
+    private static func appendLabel(_ raw: String, confidence: Int,
+                                    to candidates: inout [WorkspaceCandidate]) {
         guard let value = cleaned(raw), !value.contains("\n") else { return }
         if let embedded = embeddedPath(in: value) {
+            // Paths from arbitrary transcript/static text are commonly user prompt content. Only
+            // accept them when structural metadata or selection made the source trustworthy.
+            guard confidence >= 75 else { return }
             candidates.append(WorkspaceCandidate(value: embedded.value, kind: embedded.kind,
-                                                 source: .accessibilityLabel, confidence: 80))
-        } else if value.count <= 100, !value.contains("/") {
+                                                 source: .accessibilityLabel,
+                                                 confidence: max(80, confidence)))
+        } else if value.count <= 150, !value.contains("/") {
             candidates.append(WorkspaceCandidate(value: value, kind: .displayName,
-                                                 source: .accessibilityLabel, confidence: 50))
+                                                 source: .accessibilityLabel,
+                                                 confidence: confidence))
             // Window/control titles commonly append the client name ("repo — Codex"). Keep the
             // full label first, then emit conservative title components at slightly lower weight.
             for separator in [" — ", " | ", " · "] where value.contains(separator) {
@@ -200,7 +307,7 @@ nonisolated enum AccessibilityWorkspaceCandidateExtractor {
                     guard let name = cleaned(component), name.count <= 100 else { continue }
                     candidates.append(WorkspaceCandidate(value: name, kind: .displayName,
                                                          source: .accessibilityLabel,
-                                                         confidence: 45))
+                                                         confidence: max(1, confidence - 5)))
                 }
             }
         }
@@ -243,25 +350,30 @@ nonisolated enum AccessibilityWorkspaceCandidateExtractor {
 /// choosing the wrong one of two repositories both named "api".
 nonisolated enum RepoCandidateResolver {
     static func resolve(_ candidates: [WorkspaceCandidate], knownRoots: [URL]) -> URL? {
-        let ordered = candidates.enumerated().sorted {
-            if $0.element.confidence == $1.element.confidence { return $0.offset < $1.offset }
-            return $0.element.confidence > $1.element.confidence
-        }.map(\.element)
+        let roots = unique(knownRoots.map(canonical)).filter {
+            RepoScanner.findRepoRoot(from: $0).map(canonical) == $0
+        }
+        let tiers = Dictionary(grouping: candidates, by: \.confidence)
 
-        for candidate in ordered {
-            switch candidate.kind {
-            case .absolutePath, .fileURL:
-                guard let url = fileURL(for: candidate) else { continue }
-                if let root = RepoScanner.findRepoRoot(from: url) {
-                    return canonical(root)
+        for confidence in tiers.keys.sorted(by: >) {
+            var matches: [URL] = []
+            for candidate in tiers[confidence] ?? [] {
+                switch candidate.kind {
+                case .absolutePath, .fileURL:
+                    guard let url = fileURL(for: candidate),
+                          let root = RepoScanner.findRepoRoot(from: url) else { continue }
+                    matches.append(canonical(root))
+                case .displayName:
+                    let named = roots.filter {
+                        $0.lastPathComponent.caseInsensitiveCompare(candidate.value) == .orderedSame
+                    }
+                    if named.count == 1 { matches.append(named[0]) }
                 }
-            case .displayName:
-                let matches = unique(knownRoots.map(canonical)).filter {
-                    $0.lastPathComponent.caseInsensitiveCompare(candidate.value) == .orderedSame
-                        && RepoScanner.findRepoRoot(from: $0).map(canonical) == $0
-                }
-                if matches.count == 1 { return matches[0] }
             }
+
+            let uniqueMatches = unique(matches)
+            if uniqueMatches.count == 1 { return uniqueMatches[0] }
+            if uniqueMatches.count > 1 { return nil }
         }
         return nil
     }
@@ -289,8 +401,8 @@ nonisolated enum RepoCandidateResolver {
     }
 }
 
-/// Pure same-root decision used by the activation coordinator. It prevents an automatic lookup on
-/// every hotkey from clearing the current symbols, draining cache writes, and restarting a watcher.
+/// Pure same-root decision used by the activation coordinator. It prevents repeated monitor scans
+/// from clearing current symbols, draining cache writes, and restarting the repository watcher.
 nonisolated enum RepoActivationPolicy {
     static func shouldActivate(current: URL?, candidate: URL) -> Bool {
         guard let current else { return true }

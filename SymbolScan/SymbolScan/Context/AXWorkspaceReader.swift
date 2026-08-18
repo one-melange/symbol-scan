@@ -15,6 +15,7 @@ nonisolated final class AXWorkspaceReader: AccessibilitySnapshotReading, Sendabl
     private struct PendingNode {
         let element: AXUIElement
         let depth: Int
+        let parentIndex: Int?
     }
 
     private let maxNodes: Int
@@ -22,8 +23,8 @@ nonisolated final class AXWorkspaceReader: AccessibilitySnapshotReading, Sendabl
     private let timeBudget: TimeInterval
     private let messagingTimeout: Float
 
-    init(maxNodes: Int = 300, maxDepth: Int = 8, timeBudget: TimeInterval = 0.18,
-         messagingTimeout: Float = 0.12) {
+    init(maxNodes: Int = 1_200, maxDepth: Int = 32, timeBudget: TimeInterval = 0.45,
+         messagingTimeout: Float = 0.08) {
         self.maxNodes = maxNodes
         self.maxDepth = maxDepth
         self.timeBudget = timeBudget
@@ -42,22 +43,22 @@ nonisolated final class AXWorkspaceReader: AccessibilitySnapshotReading, Sendabl
         }
 
         let started = CFAbsoluteTimeGetCurrent()
-        var queue = [PendingNode(element: window, depth: 0)]
-        if let focused = elementAttribute(kAXFocusedUIElementAttribute as String, from: app) {
-            queue.insert(PendingNode(element: focused, depth: 0), at: 0)
-        }
-        var cursor = 0
+        // Depth-first preorder reaches Electron's deeply nested web content quickly and preserves
+        // parent indices. Starting from the window (rather than separately seeding the focused
+        // element) prevents a focused descendant from being recorded without its ancestry.
+        var stack = [PendingNode(element: window, depth: 0, parentIndex: nil)]
         var visited = Set<CFHashCode>()
         var nodes: [AccessibilityNodeSnapshot] = []
 
-        while cursor < queue.count, nodes.count < maxNodes,
+        while let pending = stack.popLast(), nodes.count < maxNodes,
               CFAbsoluteTimeGetCurrent() - started < timeBudget {
-            let pending = queue[cursor]
-            cursor += 1
             let hash = CFHash(pending.element)
             guard visited.insert(hash).inserted else { continue }
 
-            if let snapshot = snapshot(pending.element, depth: pending.depth) {
+            var parentForChildren = pending.parentIndex
+            if let snapshot = snapshot(pending.element, depth: pending.depth,
+                                       parentIndex: pending.parentIndex) {
+                parentForChildren = nodes.count
                 nodes.append(snapshot)
             }
             guard pending.depth < maxDepth else { continue }
@@ -67,16 +68,20 @@ nonisolated final class AXWorkspaceReader: AccessibilitySnapshotReading, Sendabl
             let children = visible.isEmpty
                 ? elementArrayAttribute(kAXChildrenAttribute as String, from: pending.element)
                 : visible
-            queue.append(contentsOf: children.map { PendingNode(element: $0, depth: pending.depth + 1) })
+            stack.append(contentsOf: children.reversed().map {
+                PendingNode(element: $0, depth: pending.depth + 1,
+                            parentIndex: parentForChildren)
+            })
         }
 
         return AccessibilitySnapshot(nodes: nodes)
     }
 
-    private func snapshot(_ element: AXUIElement, depth: Int) -> AccessibilityNodeSnapshot? {
+    private func snapshot(_ element: AXUIElement, depth: Int,
+                          parentIndex: Int?) -> AccessibilityNodeSnapshot? {
         // Fetch the common attributes in one AX IPC round-trip. Reading them one by one lets a
         // sluggish target consume one messaging timeout per attribute and occupy the detector's
-        // serial queue well beyond the picker's deadline.
+        // serial queue well beyond the traversal budget.
         var attributes = [
             kAXRoleAttribute as String,
             kAXSubroleAttribute as String,
@@ -87,29 +92,38 @@ nonisolated final class AXWorkspaceReader: AccessibilitySnapshotReading, Sendabl
             AccessibilityWorkspaceCandidateExtractor.titleAttribute,
             AccessibilityWorkspaceCandidateExtractor.descriptionAttribute,
             AccessibilityWorkspaceCandidateExtractor.helpAttribute,
+            AccessibilityWorkspaceCandidateExtractor.selectedAttribute,
+            AccessibilityWorkspaceCandidateExtractor.focusedAttribute,
+            AccessibilityWorkspaceCandidateExtractor.expandedAttribute,
+            AccessibilityWorkspaceCandidateExtractor.domIdentifierAttribute,
+            AccessibilityWorkspaceCandidateExtractor.roleDescriptionAttribute,
         ]
 #if DEBUG
-        // Debug builds also inspect AXValue on static/editable text so live AX traces reveal where
-        // Electron exposes project labels. It is kept out of `attributes` below unless the role is
-        // already production-safe, so diagnostics cannot alter candidate extraction behavior.
+        // The explicit diagnostic trace is the only mode that requests AXValue for every role.
+        // Production requests it separately only after the role is known to be navigation-safe.
         attributes.append(AccessibilityWorkspaceCandidateExtractor.valueAttribute)
 #endif
         let copied = copiedAttributes(attributes, from: element)
         guard let role = stringValue(copied[kAXRoleAttribute as String]) else { return nil }
-        // AXValue on text areas/static text can contain an entire prompt or transcript. Read it only
-        // from selection controls whose value may be the selected project/folder label.
+        // Read short labels from roles Electron commonly uses for navigation. Editable text areas
+        // remain excluded so prompts are never provider input; DEBUG can still display them.
         let safeValueRoles: Set<String> = [
             "AXButton", "AXPopUpButton", "AXMenuButton", "AXRadioButton", "AXComboBox",
+            "AXStaticText", "AXHeading", "AXRow", "AXCell", "AXLink",
+            "AXDisclosureTriangle", "AXTab",
         ]
         var values: [String: String] = [:]
         for attribute in attributes.dropFirst(3)
             where attribute != AccessibilityWorkspaceCandidateExtractor.valueAttribute {
             if let value = stringValue(copied[attribute]) { values[attribute] = value }
         }
-        if safeValueRoles.contains(role),
-           let value = stringAttribute(AccessibilityWorkspaceCandidateExtractor.valueAttribute,
-                                       from: element) {
-            values[AccessibilityWorkspaceCandidateExtractor.valueAttribute] = value
+        if safeValueRoles.contains(role) {
+            let rawValue = copied[AccessibilityWorkspaceCandidateExtractor.valueAttribute]
+                ?? copiedAttribute(AccessibilityWorkspaceCandidateExtractor.valueAttribute,
+                                   from: element)
+            if let value = stringValue(rawValue), value.count <= 500 {
+                values[AccessibilityWorkspaceCandidateExtractor.valueAttribute] = value
+            }
         }
 #if DEBUG
         var debugValues = values
@@ -120,6 +134,7 @@ nonisolated final class AXWorkspaceReader: AccessibilitySnapshotReading, Sendabl
         let debugValues: [String: String] = [:]
 #endif
         return AccessibilityNodeSnapshot(
+            parentIndex: parentIndex,
             depth: depth,
             role: role,
             subrole: stringValue(copied[kAXSubroleAttribute as String]),
@@ -154,15 +169,16 @@ nonisolated final class AXWorkspaceReader: AccessibilitySnapshotReading, Sendabl
         return value
     }
 
-    private func stringAttribute(_ attribute: String, from element: AXUIElement) -> String? {
-        guard let value = copiedAttribute(attribute, from: element) else { return nil }
-        return stringValue(value)
-    }
-
     private func stringValue(_ value: CFTypeRef?) -> String? {
         guard let value else { return nil }
         if CFGetTypeID(value) == CFStringGetTypeID() { return value as? String }
         if CFGetTypeID(value) == CFURLGetTypeID(), let url = value as? URL { return url.absoluteString }
+        if CFGetTypeID(value) == CFBooleanGetTypeID(), let bool = value as? Bool {
+            return bool ? "true" : "false"
+        }
+        if CFGetTypeID(value) == CFNumberGetTypeID(), let number = value as? NSNumber {
+            return number.stringValue
+        }
         return nil
     }
 
@@ -177,7 +193,7 @@ nonisolated final class AXWorkspaceReader: AccessibilitySnapshotReading, Sendabl
         guard AXUIElementGetAttributeValueCount(element, attribute as CFString, &count) == .success,
               count > 0 else { return [] }
         var values: CFArray?
-        let requested = min(count, 100)
+        let requested = min(count, 250)
         guard AXUIElementCopyAttributeValues(element, attribute as CFString, 0, requested, &values) == .success,
               let values else { return [] }
         return (values as NSArray).compactMap { value in
@@ -209,7 +225,8 @@ nonisolated final class WorkspaceContextDetector {
         registry.provider(for: app.bundleIdentifier)?.displayName ?? app.localizedName
     }
 
-    func detect(app: RunningAppIdentity, knownRoots: [URL], completion: @escaping (URL?) -> Void) {
+    func detect(app: RunningAppIdentity, knownRoots: [URL], trace: Bool = false,
+                completion: @escaping (URL?) -> Void) {
         guard let provider = registry.provider(for: app.bundleIdentifier) else {
             completion(nil)
             return
@@ -221,12 +238,16 @@ nonisolated final class WorkspaceContextDetector {
             let candidates = provider.candidates(from: snapshot)
             let root = RepoCandidateResolver.resolve(candidates, knownRoots: knownRoots)
             let elapsedMS = Int((CFAbsoluteTimeGetCurrent() - started) * 1000)
-            Log.context.debug("Workspace detection for \(app.bundleIdentifier, privacy: .public): \(snapshot.nodes.count) nodes, \(candidates.count) candidates, \(elapsedMS)ms, matched=\(root != nil, privacy: .public)")
+            if trace || root != nil {
+                Log.context.debug("Workspace detection for \(app.bundleIdentifier, privacy: .public): \(snapshot.nodes.count) nodes, \(candidates.count) candidates, \(elapsedMS)ms, matched=\(root != nil, privacy: .public)")
+            }
             completion(root)
 #if DEBUG
-            WorkspaceContextDebugTrace.dump(app: app, snapshot: snapshot,
-                                            candidates: candidates, knownRoots: knownRoots,
-                                            resolvedRoot: root, elapsedMS: elapsedMS)
+            if trace {
+                WorkspaceContextDebugTrace.dump(app: app, snapshot: snapshot,
+                                                candidates: candidates, knownRoots: knownRoots,
+                                                resolvedRoot: root, elapsedMS: elapsedMS)
+            }
 #endif
         }
     }
@@ -249,7 +270,7 @@ nonisolated private enum WorkspaceContextDebugTrace {
             let attributes = node.debugAttributes.keys.sorted().map { key in
                 "\(key)=\(quoted(node.debugAttributes[key] ?? ""))"
             }.joined(separator: " ")
-            Log.context.notice("SymbolScan AX TRACE AX[\(index, privacy: .public)] depth=\(node.depth, privacy: .public) role=\(node.role, privacy: .public) subrole=\(subrole, privacy: .public) id=\(identifier, privacy: .public) \(attributes, privacy: .public)")
+            Log.context.notice("SymbolScan AX TRACE AX[\(index, privacy: .public)] parent=\(node.parentIndex.map(String.init) ?? "-", privacy: .public) depth=\(node.depth, privacy: .public) role=\(node.role, privacy: .public) subrole=\(subrole, privacy: .public) id=\(identifier, privacy: .public) \(attributes, privacy: .public)")
         }
 
         if knownRoots.isEmpty {

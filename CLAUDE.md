@@ -18,8 +18,9 @@ A trigger flows through the subsystems like this:
 ```
 EventTap (global CGEventTap; configurable hotkey)
   └─> AppDelegate (owns EventTap, SymbolIndex, OverlayWindowController)
-        ├─> WorkspaceContextDetector
-        │     └─> per-app provider → bounded AX snapshot → RepoCandidateResolver
+        ├─> WorkspaceContextMonitor (AX notifications + bounded polling)
+        │     └─> WorkspaceContextDetector
+        │           └─> per-app provider → bounded AX snapshot → RepoCandidateResolver
         │           (Codex + Claude today; registry extension point for terminal apps)
         └─> OverlayWindow + SymbolPickerView / SymbolPickerViewModel  (the picker UI)
               └─> SymbolIndex.search → SymbolMatcher  (strict-substring ranking)
@@ -33,8 +34,8 @@ EventTap (global CGEventTap; configurable hotkey)
 Source lives under `SymbolScan/SymbolScan/`:
 - `App/` — `AppDelegate` (lifecycle, permissions, wiring), `OverlayWindow` (window + controller)
 - `Input/` — `EventTap` (CGEventTap), `TextInjector` (inject / clipboard)
-- `Context/` — bounded macOS Accessibility traversal, per-app workspace providers, candidate
-  resolution, and automatic repo-detection preference
+- `Context/` — live workspace monitor, bounded macOS Accessibility traversal, per-app workspace
+  providers, candidate resolution, and automatic repo-detection preference
 - `Index/` — `Symbol`/`Language`/`SymbolKind`, `RepoScanner`, `TreeSitterParser` (+ the
   `SymbolParser` facade), `Indexer` (off-main index build), `SymbolIndex` (+ `SymbolMatcher`,
   `IndexCache`)

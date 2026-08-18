@@ -94,8 +94,18 @@ import Testing
         ])
         #expect(CodexWorkspaceContextProvider().candidates(from: snapshot) == [
             WorkspaceCandidate(value: "symbol-scan", kind: .displayName,
-                               source: .accessibilityLabel, confidence: 50)
+                               source: .accessibilityLabel, confidence: 75)
         ])
+    }
+
+    @Test func genericWindowControlHelpIsNotWorkspaceEvidence() {
+        let snapshot = AccessibilitySnapshot(nodes: [
+            AccessibilityNodeSnapshot(depth: 1, role: "AXButton",
+                                      subrole: "AXFullScreenButton", identifier: nil,
+                                      attributes: ["AXHelp":
+                                        "this button also has an action to zoom the window"])
+        ])
+        #expect(CodexWorkspaceContextProvider().candidates(from: snapshot).isEmpty)
     }
 
     @Test func structuralLabelCanContainAnEmbeddedAbsolutePath() {
@@ -119,8 +129,54 @@ import Testing
         ])
         #expect(CodexWorkspaceContextProvider().candidates(from: snapshot).contains(
             WorkspaceCandidate(value: "symbol-scan", kind: .displayName,
-                               source: .accessibilityLabel, confidence: 45)
+                               source: .accessibilityLabel, confidence: 20)
         ))
+    }
+
+    @Test func selectedDeepSessionPrefersItsProjectGroupOverOtherVisibleProjects() throws {
+        let repoA = try TestSupport.makeTempDir(prefix: "context-project-a")
+        let repoB = try TestSupport.makeTempDir(prefix: "context-project-b")
+        defer {
+            try? FileManager.default.removeItem(at: repoA)
+            try? FileManager.default.removeItem(at: repoB)
+        }
+        try TestSupport.runGit(["init", "-q"], in: repoA)
+        try TestSupport.runGit(["init", "-q"], in: repoB)
+
+        let snapshot = AccessibilitySnapshot(nodes: [
+            AccessibilityNodeSnapshot(depth: 0, role: "AXWindow", subrole: nil,
+                                      identifier: nil, attributes: ["AXTitle": "ChatGPT"]),
+            AccessibilityNodeSnapshot(parentIndex: 0, depth: 7, role: "AXWebArea",
+                                      subrole: nil, identifier: nil,
+                                      attributes: ["AXTitle": "Codex"]),
+            AccessibilityNodeSnapshot(parentIndex: 1, depth: 12, role: "AXGroup",
+                                      subrole: nil, identifier: "project-group",
+                                      attributes: ["AXTitle": repoA.lastPathComponent]),
+            AccessibilityNodeSnapshot(parentIndex: 2, depth: 13, role: "AXHeading",
+                                      subrole: nil, identifier: nil,
+                                      attributes: ["AXValue": repoA.lastPathComponent]),
+            AccessibilityNodeSnapshot(parentIndex: 2, depth: 14, role: "AXRow",
+                                      subrole: nil, identifier: "session-row",
+                                      attributes: ["AXTitle": "Older task"]),
+            AccessibilityNodeSnapshot(parentIndex: 1, depth: 12, role: "AXGroup",
+                                      subrole: nil, identifier: "project-group",
+                                      attributes: ["AXTitle": repoB.lastPathComponent]),
+            AccessibilityNodeSnapshot(parentIndex: 5, depth: 13, role: "AXHeading",
+                                      subrole: nil, identifier: nil,
+                                      attributes: ["AXValue": repoB.lastPathComponent]),
+            AccessibilityNodeSnapshot(parentIndex: 5, depth: 14, role: "AXRow",
+                                      subrole: nil, identifier: "session-row",
+                                      attributes: ["AXTitle": "Current task",
+                                                   "AXSelected": "true"]),
+        ])
+
+        let candidates = CodexWorkspaceContextProvider().candidates(from: snapshot)
+        #expect(candidates.contains(WorkspaceCandidate(value: repoB.lastPathComponent,
+                                                       kind: .displayName,
+                                                       source: .accessibilityLabel,
+                                                       confidence: 92)))
+        #expect(RepoCandidateResolver.resolve(candidates, knownRoots: [repoA, repoB])?.path
+                == repoB.resolvingSymlinksInPath().path)
     }
 
     @Test func exactPathFindsPreviouslyUnknownRepo() throws {
@@ -176,6 +232,38 @@ import Testing
         #expect(RepoCandidateResolver.resolve([candidate], knownRoots: [repoA])?.path
                 == repoA.resolvingSymlinksInPath().path)
         #expect(RepoCandidateResolver.resolve([candidate], knownRoots: [repoA, repoB]) == nil)
+    }
+
+    @Test func resolverRejectsConflictingReposAtOneConfidenceTier() throws {
+        let repoA = try TestSupport.makeTempDir(prefix: "context-tier-a")
+        let repoB = try TestSupport.makeTempDir(prefix: "context-tier-b")
+        defer {
+            try? FileManager.default.removeItem(at: repoA)
+            try? FileManager.default.removeItem(at: repoB)
+        }
+        try TestSupport.runGit(["init", "-q"], in: repoA)
+        try TestSupport.runGit(["init", "-q"], in: repoB)
+        let candidates = [repoA, repoB].map {
+            WorkspaceCandidate(value: $0.lastPathComponent, kind: .displayName,
+                               source: .accessibilityLabel, confidence: 35)
+        }
+
+        #expect(RepoCandidateResolver.resolve(candidates, knownRoots: [repoA, repoB]) == nil)
+    }
+
+    @Test func monitorAcceptsOnlyTheLatestResultForItsCurrentApp() {
+        #expect(WorkspaceMonitorResultPolicy.accepts(
+            generation: 4, currentGeneration: 4,
+            targetProcessIdentifier: 101, currentTargetProcessIdentifier: 101
+        ))
+        #expect(!WorkspaceMonitorResultPolicy.accepts(
+            generation: 3, currentGeneration: 4,
+            targetProcessIdentifier: 101, currentTargetProcessIdentifier: 101
+        ))
+        #expect(!WorkspaceMonitorResultPolicy.accepts(
+            generation: 4, currentGeneration: 4,
+            targetProcessIdentifier: 101, currentTargetProcessIdentifier: 202
+        ))
     }
 
     @Test func sameCanonicalRootDoesNotReactivate() {

@@ -46,10 +46,11 @@ The trigger is configurable via the menu bar item for the app.
   Rust, and Go.
 - **Files and directories too** — every tracked file and directory is searchable/injectable
   as a path, alongside in-file symbols.
-- **Automatic repo context** — when the picker opens over Codex or Claude, a bounded macOS
-  Accessibility lookup identifies the active project and switches the symbol index automatically.
-  Unsupported apps keep the current repo. Detection and desktop notifications for successful
-  automatic switches have independent menu-bar toggles.
+- **Automatic repo context** — while Codex or Claude is active, a bounded macOS Accessibility
+  monitor identifies project changes and switches the symbol index in the background. An open
+  picker refreshes immediately; a closed picker is already warm for the next hotkey. Unsupported
+  apps keep the current repo. Detection and desktop notifications for successful automatic
+  switches have independent menu-bar toggles.
 - **Predictable substring matching** — filtering is strict "contains", ranked so exact and
   prefix hits surface first (no surprising scattered-subsequence matches).
 - **Fast and out of the way** — a menu-bar-only (`.accessory`) app with no dock icon; the
@@ -86,8 +87,8 @@ cd symbol-scan
    → enable **SymbolScan**). This is required for the global hotkey, text injection, and
    automatic repo detection.
 5. From the menu-bar item, choose a git repo to index (**Choose Repo…**) as your fallback.
-   When you press `⌘⇧O` (or your configured hotkey) in Codex or Claude, SymbolScan detects the
-   active project automatically; other apps continue using the current repo.
+   As you move between projects in Codex or Claude, SymbolScan detects the active project in the
+   background; other apps continue using the current repo.
 
 ## Install it (run outside Xcode)
 
@@ -109,6 +110,7 @@ installed `/Applications` copy, not a build launched from Xcode).
 flowchart TD
     Trigger["EventTap — global CGEventTap<br/>(configurable hotkey)"]
     App["AppDelegate<br/>owns event tap, index, overlay controller"]
+    Monitor["WorkspaceContextMonitor<br/>AX events + bounded polling"]
     Context["WorkspaceContextDetector<br/>provider registry + bounded AX lookup"]
     Resolver["RepoCandidateResolver<br/>path/name validation"]
     OWC["OverlayWindowController<br/>OverlayWindow + picker lifecycle"]
@@ -122,7 +124,8 @@ flowchart TD
     Parser["SymbolParser → TreeSitterParser<br/>(per-language symbol extraction)"]
 
     Trigger --> App
-    App -->|Codex or Claude| Context --> Resolver -->|activate matching repo| App
+    App --> Monitor
+    Monitor -->|Codex or Claude| Context --> Resolver -->|activate matching repo| App
     App --> OWC
     OWC --> View --> VM --> Index
     OWC -->|on pick| Injector
@@ -132,10 +135,12 @@ flowchart TD
     Parser -->|builds| Index
 ```
 
-Accessibility traversal runs only when the picker is invoked, is time/node/depth bounded, and
-does not persist or log AX text. App-specific providers are registered separately from the
-shared resolver, leaving a narrow extension point for terminal apps that can expose a focused
-tab's working directory in the future.
+While a supported app is frontmost, AX change notifications trigger debounced scans and a short
+poll is the fallback for Electron changes that do not emit reliable notifications. Every traversal
+is time/node/depth bounded; snapshots are not persisted, and Release builds do not log AX text.
+App-specific providers are registered separately from the monitor, traversal, and shared resolver,
+leaving a narrow extension point for Terminal, iTerm, Ghostty, or other apps that can expose a
+focused tab's working directory in the future.
 
 The pure, IO-free logic (matching/ranking, per-language queries, workspace candidate
 resolution) is deliberately kept off the main actor so it can be unit-tested in isolation.
