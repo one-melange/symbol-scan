@@ -22,6 +22,7 @@ _None._
 ## Next
 
 - [ ] (T31) Refresh an already-open picker on repeated hotkey **(medium priority)** — if the overlay remains visible while the user switches to a Codex conversation under a different project/repo, invoking the hotkey again must recapture Codex, rerun the one-shot AX selector probe, activate the newly resolved repo, and refresh the existing picker results instead of retaining the repo from the conversation that originally opened it · `SymbolScan/SymbolScan/App/AppDelegate.swift`, `App/OverlayWindow.swift`, `Context/`
+- [ ] (T32) Automatic repo context for Claude Desktop **(medium priority)** — add a dedicated Claude Desktop workspace provider that identifies the active project/repo from Claude's verified AX controls when the SymbolScan hotkey is invoked, reuses the shared conservative repo resolver and notification path, and fails closed without weakening the Codex-specific toolbar selector rules · `SymbolScan/SymbolScan/Context/`, `App/AppDelegate.swift`, `SymbolScanTests/WorkspaceContextTests.swift`
 
 ## Later
 
