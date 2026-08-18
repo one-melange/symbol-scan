@@ -111,6 +111,8 @@ nonisolated enum CodexProjectSelectorLocator {
                                           valueAttribute]
     private static let projectHints = ["project", "workspace", "repository", "working folder",
                                        "project folder", "open folder"]
+    private static let selectorPrefixes = ["project", "workspace", "repository",
+                                           "working folder", "project folder"]
     private static let rejectedAnchorLabels = ["projects", "project sidebar options",
                                                "add new project"]
     private static let controlRoles: Set<String> = ["AXButton", "AXPopUpButton", "AXMenuButton"]
@@ -120,21 +122,25 @@ nonisolated enum CodexProjectSelectorLocator {
         -> [WorkspaceCandidate] {
         let evidence = evidenceNodeIndices(in: snapshot, knownRoots: knownRoots)
         var exact: [WorkspaceCandidate] = []
-        var labels: [WorkspaceCandidate] = []
         for index in evidence {
             let node = snapshot.nodes[index]
             for key in [documentAttribute, urlAttribute, filenameAttribute] + labelAttributes {
                 if let value = node.attributes[key], let candidate = pathCandidate(value) {
                     exact.append(candidate)
-                } else if labelAttributes.contains(key), let value = node.attributes[key],
-                          let name = displayNameCandidate(value) {
-                    labels.append(name)
                 }
             }
         }
-        // A selector path is definitive and avoids exposing its generic "Open project" label as a
-        // second, lower-quality candidate. Names are only needed when no selector path is present.
-        return deduplicated(exact.isEmpty ? labels : exact)
+        if !exact.isEmpty { return deduplicated(exact) }
+
+        let knownNames = Set(knownRoots.map { $0.lastPathComponent.lowercased() })
+        let labels = selectorAnchorIndices(in: snapshot, knownRoots: knownRoots).flatMap { index in
+            labelAttributes.compactMap { key in
+                snapshot.nodes[index].attributes[key].flatMap {
+                    selectorNameCandidate($0, knownNames: knownNames)
+                }
+            }
+        }
+        return deduplicated(labels)
     }
 
     /// Return only the top-toolbar selector and its immediate AX neighborhood. Codex's sidebar also
@@ -142,18 +148,7 @@ nonisolated enum CodexProjectSelectorLocator {
     /// active task selector from those navigation elements.
     static func evidenceNodeIndices(in snapshot: AccessibilitySnapshot,
                                     knownRoots: [URL]) -> [Int] {
-        guard let windowTop = snapshot.nodes.first(where: {
-            $0.role == "AXWindow" && $0.position != nil
-        })?.position?.y else { return [] }
-
-        let knownNames = Set(knownRoots.map { $0.lastPathComponent.lowercased() })
-        let anchors = snapshot.nodes.indices.filter { index in
-            let node = snapshot.nodes[index]
-            guard isTopToolbarControl(node, windowTop: windowTop) else { return false }
-            let labels = labelAttributes.compactMap { node.attributes[$0] }
-                .map { cleaned($0).lowercased() }
-            return isProjectAnchor(node) || labels.contains(where: knownNames.contains)
-        }
+        let anchors = selectorAnchorIndices(in: snapshot, knownRoots: knownRoots)
         var indices = Set<Int>()
         for anchor in anchors {
             let lower = max(0, anchor - 16)
@@ -164,6 +159,22 @@ nonisolated enum CodexProjectSelectorLocator {
             }
         }
         return indices.sorted()
+    }
+
+    private static func selectorAnchorIndices(in snapshot: AccessibilitySnapshot,
+                                              knownRoots: [URL]) -> [Int] {
+        guard let windowTop = snapshot.nodes.first(where: {
+            $0.role == "AXWindow" && $0.position != nil
+        })?.position?.y else { return [] }
+
+        let knownNames = Set(knownRoots.map { $0.lastPathComponent.lowercased() })
+        return snapshot.nodes.indices.filter { index in
+            let node = snapshot.nodes[index]
+            guard isTopToolbarControl(node, windowTop: windowTop) else { return false }
+            let labels = labelAttributes.compactMap { node.attributes[$0] }
+                .map { cleaned($0).lowercased() }
+            return isProjectAnchor(node) || labels.contains(where: knownNames.contains)
+        }
     }
 
     static func isTopToolbarControl(_ node: AccessibilityNodeSnapshot,
@@ -218,6 +229,22 @@ nonisolated enum CodexProjectSelectorLocator {
         guard !value.isEmpty, value.count <= 100, !value.contains("/"),
               !value.contains("\n") else { return nil }
         return WorkspaceCandidate(value: value, kind: .displayName)
+    }
+
+    /// Codex labels the closed toolbar control as "Project: symbol-scan". Normalize only this
+    /// verified selector label; arbitrary neighboring text must never participate in name matching.
+    private static func selectorNameCandidate(_ raw: String,
+                                              knownNames: Set<String>) -> WorkspaceCandidate? {
+        let value = cleaned(raw)
+        let lowercased = value.lowercased()
+        for prefix in selectorPrefixes {
+            let marker = "\(prefix):"
+            guard lowercased.hasPrefix(marker) else { continue }
+            let suffixStart = value.index(value.startIndex, offsetBy: marker.count)
+            return displayNameCandidate(String(value[suffixStart...]))
+        }
+        guard knownNames.contains(lowercased) else { return nil }
+        return displayNameCandidate(value)
     }
 
     private static func cleaned(_ raw: String) -> String {

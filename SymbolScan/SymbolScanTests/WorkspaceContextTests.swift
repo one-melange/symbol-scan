@@ -147,9 +147,36 @@ import Testing
                                       debugAttributes: ["AXValue": "secret-project"])
         ])
         #expect(CodexWorkspaceContextProvider().candidates(from: snapshot,
-                                                           knownRoots: [root]) == [
-            WorkspaceCandidate(value: "Open project", kind: .displayName)
+                                                           knownRoots: [root]).isEmpty)
+    }
+
+    @Test func prefixedToolbarProjectLabelResolvesTheKnownRepo() throws {
+        let base = try TestSupport.makeTempDir(prefix: "context-prefixed-selector")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let repo = base.appendingPathComponent("symbol-scan")
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        try TestSupport.runGit(["init", "-q"], in: repo)
+        let snapshot = AccessibilitySnapshot(nodes: [
+            AccessibilityNodeSnapshot(depth: 0, role: "AXWindow", identifier: nil,
+                                      position: CGPoint(x: 64, y: 33), attributes: [:]),
+            AccessibilityNodeSnapshot(parentIndex: 0, depth: 13, role: "AXGroup",
+                                      identifier: nil, attributes: [:]),
+            AccessibilityNodeSnapshot(parentIndex: 1, depth: 15, role: "AXPopUpButton",
+                                      identifier: nil, position: CGPoint(x: 347, y: 42),
+                                      attributes: ["AXDescription": "Project: symbol-scan"]),
+            AccessibilityNodeSnapshot(parentIndex: 1, depth: 15, role: "AXButton",
+                                      identifier: nil, position: CGPoint(x: 377, y: 44),
+                                      attributes: ["AXTitle": "Design T9 app repo detection"]),
+            AccessibilityNodeSnapshot(parentIndex: 1, depth: 15, role: "AXButton",
+                                      identifier: nil, position: CGPoint(x: 583, y: 42),
+                                      attributes: ["AXDescription": "Chat actions"]),
         ])
+
+        let candidates = CodexWorkspaceContextProvider().candidates(from: snapshot,
+                                                                     knownRoots: [repo])
+        #expect(candidates == [WorkspaceCandidate(value: "symbol-scan", kind: .displayName)])
+        #expect(RepoCandidateResolver.resolve(candidates, knownRoots: [repo])?.path
+                == repo.resolvingSymlinksInPath().path)
     }
 
     @Test func sidebarProjectsCannotOverrideTheTopToolbarProject() {
@@ -173,7 +200,7 @@ import Testing
                                       identifier: nil, attributes: [:]),
             AccessibilityNodeSnapshot(parentIndex: 5, depth: 16, role: "AXButton",
                                       identifier: nil, position: CGPoint(x: 560, y: 12),
-                                      attributes: ["AXDescription": "symbol-scan"]),
+                                      attributes: ["AXDescription": "Project: symbol-scan"]),
         ])
 
         #expect(CodexWorkspaceContextProvider().candidates(

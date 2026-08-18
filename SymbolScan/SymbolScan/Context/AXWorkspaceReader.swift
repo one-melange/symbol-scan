@@ -274,7 +274,7 @@ nonisolated private enum WorkspaceContextDebugTrace {
                      evidence: [Int], candidates: [WorkspaceCandidate],
                      knownRoots: [URL], resolvedRoot: URL?, elapsedMS: Int) {
         Log.context.notice("===== SymbolScan CODEX PROJECT TRACE app=\(app.bundleIdentifier, privacy: .public) visited=\(snapshot.nodes.count, privacy: .public)/180 elapsed=\(elapsedMS, privacy: .public)ms =====")
-        Log.context.notice("SymbolScan CODEX PROJECT TARGET: control within 96pt of the focused window's top edge. It must have project/workspace/repository/folder metadata or a label exactly matching one known repo. Projects, Project sidebar options, Add new project, and all controls below the toolbar band are rejected.")
+        Log.context.notice("SymbolScan CODEX PROJECT TARGET: control within 96pt of the focused window's top edge. It must have project/workspace/repository/folder metadata or a label exactly matching one known repo. Semantic labels such as Project: symbol-scan normalize to symbol-scan; neighboring toolbar labels are ignored. Projects, Project sidebar options, Add new project, and all controls below the toolbar band are rejected.")
         if knownRoots.isEmpty {
             Log.context.notice("SymbolScan CODEX PROJECT KNOWN REPOS: <none>")
         } else {
