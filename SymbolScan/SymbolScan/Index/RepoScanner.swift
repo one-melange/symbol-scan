@@ -213,7 +213,7 @@ class RepoScanner {
     /// directory: AX document URLs and `URL(fileURLWithPath:)` often omit a trailing slash even when
     /// they name a directory. A worktree's `.git` is a file rather than a directory; `fileExists`
     /// intentionally accepts either so the exact checkout being edited remains the active root.
-    static func findRepoRoot(from url: URL) -> URL? {
+    nonisolated static func findRepoRoot(from url: URL) -> URL? {
         let fm = FileManager.default
         let resolved = url.standardizedFileURL.resolvingSymlinksInPath()
         var isDirectory: ObjCBool = false
@@ -374,7 +374,7 @@ private func repoWatcherCallback(
 /// is ever sandboxed this must switch to a security-scoped bookmark, or restored paths will fail to
 /// open. The decision logic (empty/whitespace/missing/not-a-directory) is kept in the pure
 /// `decodePath` (existence injected) so it unit-tests without touching disk.
-enum RepoPreference {
+nonisolated enum RepoPreference {
     static let activeKey = "SymbolScan.activeRepoPath"
     static let recentsKey = "SymbolScan.recentRepoPaths"
     static let recentsLimit = 8

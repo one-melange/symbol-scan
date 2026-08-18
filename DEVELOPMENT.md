@@ -182,3 +182,9 @@ synchronized group, so new files are picked up automatically (no project edit ne
   discover a repo or worktree without prior selection.
 - Detection has a 250 ms deadline. If AX data is unavailable or late, the picker opens against
   the current repo instead of blocking.
+
+**Automatic repo-switch notification does not appear**
+- Confirm **Notify on Automatic Repo Switch** is checked in the menu-bar menu and notifications
+  are allowed for SymbolScan in System Settings.
+- A banner is posted only when automatic detection changes the canonical repo root. Repeated
+  detections of the current repo, manual choices, unsupported apps, and failed lookups stay silent.

@@ -48,7 +48,8 @@ The trigger is configurable via the menu bar item for the app.
   as a path, alongside in-file symbols.
 - **Automatic repo context** — when the picker opens over Codex or Claude, a bounded macOS
   Accessibility lookup identifies the active project and switches the symbol index automatically.
-  Unsupported apps keep the current repo, and the behavior can be disabled from the menu bar.
+  Unsupported apps keep the current repo. Detection and desktop notifications for successful
+  automatic switches have independent menu-bar toggles.
 - **Predictable substring matching** — filtering is strict "contains", ranked so exact and
   prefix hits surface first (no surprising scattered-subsequence matches).
 - **Fast and out of the way** — a menu-bar-only (`.accessory`) app with no dock icon; the

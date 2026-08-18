@@ -2,7 +2,7 @@ import Foundation
 
 /// The process identity captured before SymbolScan activates its overlay. Keeping this free of
 /// AppKit makes provider routing and third-party app support unit-testable.
-struct RunningAppIdentity: Equatable {
+nonisolated struct RunningAppIdentity: Equatable, Sendable {
     let processIdentifier: pid_t
     let bundleIdentifier: String
     let localizedName: String?
@@ -11,7 +11,7 @@ struct RunningAppIdentity: Equatable {
 /// A privacy-filtered, flat representation of one accessibility element. The production reader
 /// records only structural metadata and the small set of attributes providers can use to identify
 /// a workspace; it never stores the complete AX attribute dictionary.
-struct AccessibilityNodeSnapshot: Equatable {
+nonisolated struct AccessibilityNodeSnapshot: Equatable, Sendable {
     let depth: Int
     let role: String
     let subrole: String?
@@ -19,17 +19,17 @@ struct AccessibilityNodeSnapshot: Equatable {
     let attributes: [String: String]
 }
 
-struct AccessibilitySnapshot: Equatable {
+nonisolated struct AccessibilitySnapshot: Equatable, Sendable {
     let nodes: [AccessibilityNodeSnapshot]
 }
 
-enum WorkspaceCandidateKind: Equatable {
+nonisolated enum WorkspaceCandidateKind: Equatable, Sendable {
     case absolutePath
     case fileURL
     case displayName
 }
 
-enum WorkspaceCandidateSource: Equatable {
+nonisolated enum WorkspaceCandidateSource: Equatable, Sendable {
     case accessibilityDocument
     case accessibilityURL
     case accessibilityFilename
@@ -38,7 +38,7 @@ enum WorkspaceCandidateSource: Equatable {
 
 /// Evidence emitted by an app provider. Providers do not touch git, preferences, or the index;
 /// the shared resolver applies those policies uniformly for Codex, Claude, and future terminals.
-struct WorkspaceCandidate: Equatable {
+nonisolated struct WorkspaceCandidate: Equatable, Sendable {
     let value: String
     let kind: WorkspaceCandidateKind
     let source: WorkspaceCandidateSource
@@ -48,12 +48,17 @@ struct WorkspaceCandidate: Equatable {
 /// App-specific evidence extraction boundary. Supporting another editor or terminal should require
 /// only another provider plus registration — never changes to AX traversal, git resolution, or
 /// repository activation.
-protocol WorkspaceContextProvider {
+nonisolated protocol WorkspaceContextProvider: Sendable {
     var supportedBundleIdentifiers: Set<String> { get }
+    var displayName: String? { get }
     func candidates(from snapshot: AccessibilitySnapshot) -> [WorkspaceCandidate]
 }
 
-struct WorkspaceProviderRegistry {
+extension WorkspaceContextProvider {
+    var displayName: String? { nil }
+}
+
+nonisolated struct WorkspaceProviderRegistry: Sendable {
     private let providers: [any WorkspaceContextProvider]
 
     init(providers: [any WorkspaceContextProvider]) {
@@ -77,8 +82,9 @@ struct WorkspaceProviderRegistry {
 /// Codex currently ships as ChatGPT.app but retains this bundle identifier. Its local tasks may
 /// point at either the user's checkout or a task worktree; the shared resolver deliberately keeps
 /// whichever concrete path AX exposes.
-struct CodexWorkspaceContextProvider: WorkspaceContextProvider {
+nonisolated struct CodexWorkspaceContextProvider: WorkspaceContextProvider {
     let supportedBundleIdentifiers: Set<String> = ["com.openai.codex"]
+    let displayName: String? = "Codex"
 
     func candidates(from snapshot: AccessibilitySnapshot) -> [WorkspaceCandidate] {
         AccessibilityWorkspaceCandidateExtractor.extract(from: snapshot)
@@ -87,8 +93,9 @@ struct CodexWorkspaceContextProvider: WorkspaceContextProvider {
 
 /// Claude Code and Cowork live inside Claude Desktop. Ordinary Claude chats expose no local folder,
 /// in which case this provider returns no resolvable evidence and SymbolScan keeps its current repo.
-struct ClaudeWorkspaceContextProvider: WorkspaceContextProvider {
+nonisolated struct ClaudeWorkspaceContextProvider: WorkspaceContextProvider {
     let supportedBundleIdentifiers: Set<String> = ["com.anthropic.claudefordesktop"]
+    let displayName: String? = "Claude"
 
     func candidates(from snapshot: AccessibilitySnapshot) -> [WorkspaceCandidate] {
         AccessibilityWorkspaceCandidateExtractor.extract(from: snapshot)
@@ -98,7 +105,7 @@ struct ClaudeWorkspaceContextProvider: WorkspaceContextProvider {
 /// Conservative extraction shared by the first two Electron clients. Structured document/URL
 /// attributes are strongest. Human-readable labels are considered only on structural controls —
 /// never arbitrary static text or editable values, which could be a prompt or chat transcript.
-enum AccessibilityWorkspaceCandidateExtractor {
+nonisolated enum AccessibilityWorkspaceCandidateExtractor {
     static let documentAttribute = "AXDocument"
     static let urlAttribute = "AXURL"
     static let filenameAttribute = "AXFilename"
@@ -221,7 +228,7 @@ enum AccessibilityWorkspaceCandidateExtractor {
 /// Turns provider evidence into one verified git root. Exact paths can discover a repo SymbolScan
 /// has never seen; display names can only select a unique known root, preventing guesses such as
 /// choosing the wrong one of two repositories both named "api".
-enum RepoCandidateResolver {
+nonisolated enum RepoCandidateResolver {
     static func resolve(_ candidates: [WorkspaceCandidate], knownRoots: [URL]) -> URL? {
         let ordered = candidates.enumerated().sorted {
             if $0.element.confidence == $1.element.confidence { return $0.offset < $1.offset }
@@ -271,7 +278,7 @@ enum RepoCandidateResolver {
 
 /// Pure same-root decision used by the activation coordinator. It prevents an automatic lookup on
 /// every hotkey from clearing the current symbols, draining cache writes, and restarting a watcher.
-enum RepoActivationPolicy {
+nonisolated enum RepoActivationPolicy {
     static func shouldActivate(current: URL?, candidate: URL) -> Bool {
         guard let current else { return true }
         return RepoCandidateResolver.canonical(current) != RepoCandidateResolver.canonical(candidate)
@@ -280,8 +287,22 @@ enum RepoActivationPolicy {
 
 /// Opt-out for the new ambient behavior. Missing preference means enabled so the feature works on
 /// upgrade without setup; the menu-bar toggle persists an explicit choice thereafter.
-enum AutomaticRepoDetectionPreference {
+nonisolated enum AutomaticRepoDetectionPreference {
     static let key = "SymbolScan.automaticRepoDetection"
+
+    static func isEnabled(in defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: key) == nil ? true : defaults.bool(forKey: key)
+    }
+
+    static func setEnabled(_ enabled: Bool, in defaults: UserDefaults = .standard) {
+        defaults.set(enabled, forKey: key)
+    }
+}
+
+/// Independent opt-out for the temporary/live-testing banner. Detection can stay enabled while
+/// its successful switch feedback is silenced. Like detection itself, this defaults on.
+nonisolated enum AutomaticRepoSwitchNotificationPreference {
+    static let key = "SymbolScan.automaticRepoSwitchNotifications"
 
     static func isEnabled(in defaults: UserDefaults = .standard) -> Bool {
         defaults.object(forKey: key) == nil ? true : defaults.bool(forKey: key)

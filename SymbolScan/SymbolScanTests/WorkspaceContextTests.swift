@@ -23,6 +23,11 @@ import Testing
         #expect(WorkspaceProviderRegistry.live.supports("com.openai.codex"))
         #expect(WorkspaceProviderRegistry.live.supports("com.anthropic.claudefordesktop"))
         #expect(!WorkspaceProviderRegistry.live.supports("com.apple.Terminal"))
+
+        let detector = WorkspaceContextDetector()
+        #expect(detector.displayName(for: RunningAppIdentity(processIdentifier: 1,
+                                                             bundleIdentifier: "com.openai.codex",
+                                                             localizedName: "ChatGPT")) == "Codex")
     }
 
     @Test func registryAcceptsAThirdAppWithoutDetectorChanges() async throws {
@@ -178,5 +183,24 @@ import Testing
         #expect(!AutomaticRepoDetectionPreference.isEnabled(in: defaults))
         AutomaticRepoDetectionPreference.setEnabled(true, in: defaults)
         #expect(AutomaticRepoDetectionPreference.isEnabled(in: defaults))
+    }
+
+    @Test func automaticSwitchNotificationPreferenceDefaultsOnAndRoundTrips() {
+        let defaults = makeDefaults()
+        #expect(AutomaticRepoSwitchNotificationPreference.isEnabled(in: defaults))
+        AutomaticRepoSwitchNotificationPreference.setEnabled(false, in: defaults)
+        #expect(!AutomaticRepoSwitchNotificationPreference.isEnabled(in: defaults))
+        AutomaticRepoSwitchNotificationPreference.setEnabled(true, in: defaults)
+        #expect(AutomaticRepoSwitchNotificationPreference.isEnabled(in: defaults))
+    }
+
+    @Test func repoSwitchNotificationNamesTheAppAndBothRepos() {
+        let previous = URL(fileURLWithPath: "/tmp/old-repo")
+        let next = URL(fileURLWithPath: "/tmp/new-repo")
+
+        #expect(RepoSwitchNotificationCopy.body(from: previous, to: next, appName: "Codex")
+                == "Codex: old-repo → new-repo")
+        #expect(RepoSwitchNotificationCopy.body(from: nil, to: next, appName: nil)
+                == "Using new-repo")
     }
 }

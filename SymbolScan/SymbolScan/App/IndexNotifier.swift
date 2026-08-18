@@ -13,6 +13,9 @@ enum IndexNotifier {
     /// runs headless/in tests — it just no-ops if the notification center is unavailable.
     static func requestAuthorization() {
         guard let center = center else { return }
+        // Automatic repo switches happen immediately before SymbolScan activates its overlay. A
+        // delegate is required for the banner to remain visible if delivery races that activation.
+        center.delegate = NotificationPresenter.shared
         center.requestAuthorization(options: [.alert, .sound]) { _, error in
             if let error { Log.notify.error("Notification authorization failed: \(error.localizedDescription, privacy: .public)") }
         }
@@ -34,10 +37,53 @@ enum IndexNotifier {
         }
     }
 
+    /// Post only after automatic context detection actually changes the active root. The caller
+    /// owns the persisted opt-out and same-root guard; this function just formats and delivers.
+    static func notifyRepoSwitched(from previousRoot: URL?, to root: URL, appName: String?) {
+        guard let center = center else { return }
+        let content = UNMutableNotificationContent()
+        content.title = RepoSwitchNotificationCopy.title
+        content.body = RepoSwitchNotificationCopy.body(from: previousRoot, to: root,
+                                                       appName: appName)
+        let request = UNNotificationRequest(
+            identifier: "symbolscan.repo-switched.\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+        center.add(request) { error in
+            if let error { Log.notify.error("Failed to post repo-switch notification: \(error.localizedDescription, privacy: .public)") }
+        }
+    }
+
     /// `UNUserNotificationCenter.current()` traps if there's no main bundle proxy (e.g. some test
     /// hosts). Guard on a bundle identifier so unit tests don't crash.
     private static var center: UNUserNotificationCenter? {
         guard Bundle.main.bundleIdentifier != nil else { return nil }
         return UNUserNotificationCenter.current()
+    }
+}
+
+/// Pure notification copy so the context change is testable without touching Notification Center.
+nonisolated enum RepoSwitchNotificationCopy {
+    static let title = "SymbolScan switched repositories"
+
+    static func body(from previousRoot: URL?, to root: URL, appName: String?) -> String {
+        let source = appName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prefix = source.flatMap { $0.isEmpty ? nil : $0 }.map { "\($0): " } ?? ""
+        if let previousRoot {
+            return "\(prefix)\(previousRoot.lastPathComponent) → \(root.lastPathComponent)"
+        }
+        return "\(prefix)Using \(root.lastPathComponent)"
+    }
+}
+
+private final class NotificationPresenter: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = NotificationPresenter()
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler:
+                                @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound])
     }
 }

@@ -3,14 +3,14 @@ import ApplicationServices
 import Foundation
 import os
 
-protocol AccessibilitySnapshotReading {
+nonisolated protocol AccessibilitySnapshotReading: Sendable {
     func read(processIdentifier: pid_t) -> AccessibilitySnapshot
 }
 
 /// A bounded, privacy-filtered AX traversal. Accessibility calls are synchronous IPC, so the reader
 /// is used exclusively from `WorkspaceContextDetector`'s background queue and has both a per-call
 /// messaging timeout and an overall traversal budget.
-final class AXWorkspaceReader: AccessibilitySnapshotReading {
+nonisolated final class AXWorkspaceReader: AccessibilitySnapshotReading, Sendable {
     private struct PendingNode {
         let element: AXUIElement
         let depth: Int
@@ -173,7 +173,7 @@ final class AXWorkspaceReader: AccessibilitySnapshotReading {
 
 /// Runs AX IPC and repository resolution away from the main actor. The registry is injected so a
 /// new provider can be proven end-to-end in tests without modifying this detector.
-final class WorkspaceContextDetector {
+nonisolated final class WorkspaceContextDetector {
     private let reader: any AccessibilitySnapshotReading
     private let registry: WorkspaceProviderRegistry
     private let queue = DispatchQueue(label: "SymbolScan.workspace-context", qos: .userInitiated)
@@ -186,6 +186,10 @@ final class WorkspaceContextDetector {
 
     func supports(_ app: RunningAppIdentity) -> Bool {
         registry.supports(app.bundleIdentifier)
+    }
+
+    func displayName(for app: RunningAppIdentity) -> String? {
+        registry.provider(for: app.bundleIdentifier)?.displayName ?? app.localizedName
     }
 
     func detect(app: RunningAppIdentity, knownRoots: [URL], completion: @escaping (URL?) -> Void) {
