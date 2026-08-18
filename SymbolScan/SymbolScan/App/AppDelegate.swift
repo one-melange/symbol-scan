@@ -22,7 +22,6 @@ nonisolated enum Log {
     static let search  = Logger(subsystem: subsystem, category: "search")
     static let scanner = Logger(subsystem: subsystem, category: "scanner")
     static let parser  = Logger(subsystem: subsystem, category: "parser")
-    static let notify  = Logger(subsystem: subsystem, category: "notifications")
     static let context = Logger(subsystem: subsystem, category: "workspace-context")
 }
 
@@ -91,7 +90,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         requestPermissions()
-        IndexNotifier.requestAuthorization()   // one-time banner permission prompt
 
         let index = SymbolIndex()
         symbolIndex = index
@@ -123,9 +121,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             onSetAutomaticDetection: { [weak self] enabled in
                 AutomaticRepoDetectionPreference.setEnabled(enabled)
                 if !enabled { self?.workspaceContextRequestID &+= 1 }
-            },
-            onSetAutomaticSwitchNotifications: { enabled in
-                AutomaticRepoSwitchNotificationPreference.setEnabled(enabled)
             }
         )
 
@@ -146,7 +141,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private enum RepoActivationSource {
         case manual
-        case automatic(appName: String?)
+        case automatic
         case restored
     }
 
@@ -169,12 +164,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let knownRoots = ([symbolIndex?.indexedRepoRoot].compactMap { $0 }
                           + RepoPreference.loadRecents())
-        let appName = workspaceContextDetector.displayName(for: identity)
         workspaceContextDetector.detect(app: identity, knownRoots: knownRoots, trace: true) {
             [weak self] root in
             DispatchQueue.main.async {
                 guard let self, self.workspaceContextRequestID == requestID, let root else { return }
-                self.activateRepo(root, source: .automatic(appName: appName))
+                self.activateRepo(root, source: .automatic)
             }
         }
     }
@@ -194,11 +188,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                                                   candidate: root) else { return }
         symbolIndex?.activateRepo(root)
         retargetWatcher(to: root)
-
-        if case .automatic(let appName) = source,
-           AutomaticRepoSwitchNotificationPreference.isEnabled() {
-            IndexNotifier.notifyRepoSwitched(from: previousRoot, to: root, appName: appName)
-        }
     }
 
     /// Point the file watcher at `root` (stopping any previous one) so saves there trigger an
@@ -316,7 +305,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let onSwitch: (URL) -> Void
     private let onOpenHotkeys: () -> Void
     private let onSetAutomaticDetection: (Bool) -> Void
-    private let onSetAutomaticSwitchNotifications: (Bool) -> Void
     private let statusItem: NSStatusItem
     private var cancellables = Set<AnyCancellable>()
 
@@ -326,8 +314,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
          onReindex: @escaping () -> Void,
          onSwitch: @escaping (URL) -> Void,
          onOpenHotkeys: @escaping () -> Void,
-         onSetAutomaticDetection: @escaping (Bool) -> Void,
-         onSetAutomaticSwitchNotifications: @escaping (Bool) -> Void) {
+         onSetAutomaticDetection: @escaping (Bool) -> Void) {
         self.index = index
         self.provisioner = provisioner
         self.onChooseRepo = onChooseRepo
@@ -335,7 +322,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         self.onSwitch = onSwitch
         self.onOpenHotkeys = onOpenHotkeys
         self.onSetAutomaticDetection = onSetAutomaticDetection
-        self.onSetAutomaticSwitchNotifications = onSetAutomaticSwitchNotifications
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
@@ -435,13 +421,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         automatic.state = AutomaticRepoDetectionPreference.isEnabled() ? .on : .off
         menu.addItem(automatic)
 
-        let notifySwitch = NSMenuItem(title: "Notify on Automatic Repo Switch",
-                                      action: #selector(toggleAutomaticSwitchNotifications),
-                                      keyEquivalent: "")
-        notifySwitch.target = self
-        notifySwitch.state = AutomaticRepoSwitchNotificationPreference.isEnabled() ? .on : .off
-        menu.addItem(notifySwitch)
-
         let login = NSMenuItem(title: "Open at Login", action: #selector(toggleLoginItem), keyEquivalent: "")
         login.target = self
         login.state = LoginItem.isEnabled ? .on : .off
@@ -476,9 +455,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         onSetAutomaticDetection(!AutomaticRepoDetectionPreference.isEnabled())
     }
 
-    @objc private func toggleAutomaticSwitchNotifications() {
-        onSetAutomaticSwitchNotifications(!AutomaticRepoSwitchNotificationPreference.isEnabled())
-    }
     /// Menu rebuilds on every open (`menuNeedsUpdate`), so the checkmark re-reads `LoginItem.isEnabled`
     /// next time — no need to mutate the item here beyond flipping the registration.
     @objc private func toggleLoginItem() { LoginItem.setEnabled(!LoginItem.isEnabled) }

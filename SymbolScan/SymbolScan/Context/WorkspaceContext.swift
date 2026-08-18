@@ -321,15 +321,3 @@ nonisolated enum AutomaticRepoDetectionPreference {
         defaults.set(enabled, forKey: key)
     }
 }
-
-nonisolated enum AutomaticRepoSwitchNotificationPreference {
-    static let key = "SymbolScan.automaticRepoSwitchNotifications"
-
-    static func isEnabled(in defaults: UserDefaults = .standard) -> Bool {
-        defaults.object(forKey: key) == nil ? true : defaults.bool(forKey: key)
-    }
-
-    static func setEnabled(_ enabled: Bool, in defaults: UserDefaults = .standard) {
-        defaults.set(enabled, forKey: key)
-    }
-}

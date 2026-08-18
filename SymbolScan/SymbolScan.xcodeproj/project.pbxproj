@@ -26,7 +26,6 @@
 		AA0500000000000000000003 /* TreeSitterGo in Frameworks */ = {isa = PBXBuildFile; productRef = AA0500000000000000000002 /* TreeSitterGo */; };
 		AA0600000000000000000011 /* TreeSitterParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0600000000000000000010 /* TreeSitterParser.swift */; };
 		AA0600000000000000000021 /* Indexer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0600000000000000000020 /* Indexer.swift */; };
-		AA0600000000000000000031 /* IndexNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0600000000000000000030 /* IndexNotifier.swift */; };
 		AA0700000000000000000003 /* TreeSitterJavaScript in Frameworks */ = {isa = PBXBuildFile; productRef = AA0700000000000000000002 /* TreeSitterJavaScript */; };
 		AA0900000000000000000011 /* LLMCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0900000000000000000010 /* LLMCore.swift */; };
 		AA0900000000000000000021 /* OpenAIChatStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0900000000000000000020 /* OpenAIChatStream.swift */; };
@@ -62,7 +61,6 @@
 		8EDE63F22FE5B2FF0024E0D5 /* SymbolPickerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SymbolPickerViewModel.swift; sourceTree = "<group>"; };
 		AA0600000000000000000010 /* TreeSitterParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TreeSitterParser.swift; sourceTree = "<group>"; };
 		AA0600000000000000000020 /* Indexer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Indexer.swift; sourceTree = "<group>"; };
-		AA0600000000000000000030 /* IndexNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndexNotifier.swift; sourceTree = "<group>"; };
 		AA0800000000000000000001 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 		AA0800000000000000000002 /* Local.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text; path = Local.xcconfig.example; sourceTree = "<group>"; };
 		AA0900000000000000000010 /* LLMCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LLMCore.swift; sourceTree = "<group>"; };
@@ -133,7 +131,6 @@
 			children = (
 				8EDE631E2FE5B2FF0024E0D5 /* AppDelegate.swift */,
 				8EDE631F2FE5B2FF0024E0D5 /* OverlayWindow.swift */,
-				AA0600000000000000000030 /* IndexNotifier.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -365,7 +362,6 @@
 				8EDE63382FE5B2FF0024E0D5 /* OverlayWindow.swift in Sources */,
 				AA0600000000000000000011 /* TreeSitterParser.swift in Sources */,
 				AA0600000000000000000021 /* Indexer.swift in Sources */,
-				AA0600000000000000000031 /* IndexNotifier.swift in Sources */,
 				8EDE633A2FE5B2FF0024E0D5 /* Symbol.swift in Sources */,
 				8EDE633B2FE5B2FF0024E0D5 /* SymbolPickerView.swift in Sources */,
 				8EDE63F12FE5B2FF0024E0D5 /* SymbolPickerViewModel.swift in Sources */,

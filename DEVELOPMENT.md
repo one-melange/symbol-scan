@@ -191,9 +191,3 @@ synchronized group, so new files are picked up automatically (no project edit ne
   fields (including editable prompt text), but those extra values stay out of candidate extraction
   so diagnostics do not change behavior. These values can include visible prompts or session text;
   do not share a trace without reviewing/redacting it.
-
-**Automatic repo-switch notification does not appear**
-- Confirm **Notify on Automatic Repo Switch** is checked in the menu-bar menu and notifications
-  are allowed for SymbolScan in System Settings.
-- A banner is posted only when automatic detection changes the canonical repo root. Repeated
-  detections of the current repo, manual choices, unsupported apps, and failed lookups stay silent.

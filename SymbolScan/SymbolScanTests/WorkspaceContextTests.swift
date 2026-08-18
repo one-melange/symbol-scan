@@ -299,17 +299,4 @@ import Testing
         #expect(AutomaticRepoDetectionPreference.isEnabled(in: defaults))
     }
 
-    @Test func automaticSwitchNotificationPreferenceDefaultsOnAndRoundTrips() {
-        let defaults = makeDefaults()
-        #expect(AutomaticRepoSwitchNotificationPreference.isEnabled(in: defaults))
-        AutomaticRepoSwitchNotificationPreference.setEnabled(false, in: defaults)
-        #expect(!AutomaticRepoSwitchNotificationPreference.isEnabled(in: defaults))
-    }
-
-    @Test func repoSwitchNotificationNamesTheAppAndBothRepos() {
-        let previous = URL(fileURLWithPath: "/tmp/old-repo")
-        let next = URL(fileURLWithPath: "/tmp/new-repo")
-        #expect(RepoSwitchNotificationCopy.body(from: previous, to: next, appName: "Codex")
-                == "Codex: old-repo → new-repo")
-    }
 }

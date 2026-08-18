@@ -48,8 +48,8 @@ The trigger is configurable via the menu bar item for the app.
   as a path, alongside in-file symbols.
 - **Automatic repo context** — when the picker hotkey is invoked from Codex, one bounded macOS
   Accessibility probe reads its project-folder control. The picker opens immediately and refreshes
-  if the probe resolves a different repo. Unsupported apps keep the current repo. Detection and
-  desktop notifications for successful automatic switches have independent menu-bar toggles.
+  if the probe resolves a different repo. Unsupported apps keep the current repo. Detection can be
+  disabled from the menu bar.
 - **Predictable substring matching** — filtering is strict "contains", ranked so exact and
   prefix hits surface first (no surprising scattered-subsequence matches).
 - **Fast and out of the way** — a menu-bar-only (`.accessory`) app with no dock icon; the
