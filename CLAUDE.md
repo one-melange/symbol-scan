@@ -9,18 +9,18 @@ symbols while prompting AI coding tools. A global hotkey pops a transparent pick
 fuzzy-search symbols indexed from the current git repo, and the chosen symbol is injected
 into whatever app had focus (or copied to the clipboard).
 
-Triggers (`Input/EventTap.swift`, currently hardcoded):
-- `@` — intended for Claude Code
-- `#` — intended for Codex
-- `⌘⇧O` — IDE-style "open symbol"
+The global trigger defaults to `⌘⇧O` and is configurable from the menu-bar settings.
 
 ## Architecture
 
 A trigger flows through the subsystems like this:
 
 ```
-EventTap (global CGEventTap; @ / # / ⌘⇧O)
+EventTap (global CGEventTap; configurable hotkey)
   └─> AppDelegate (owns EventTap, SymbolIndex, OverlayWindowController)
+        ├─> WorkspaceContextDetector (one probe per hotkey invocation)
+        │     └─> per-app provider → bounded AX snapshot → RepoCandidateResolver
+        │           (Codex project selector today; registry extension point for terminal apps)
         └─> OverlayWindow + SymbolPickerView / SymbolPickerViewModel  (the picker UI)
               └─> SymbolIndex.search → SymbolMatcher  (strict-substring ranking)
                     ▲
@@ -33,11 +33,12 @@ EventTap (global CGEventTap; @ / # / ⌘⇧O)
 Source lives under `SymbolScan/SymbolScan/`:
 - `App/` — `AppDelegate` (lifecycle, permissions, wiring), `OverlayWindow` (window + controller)
 - `Input/` — `EventTap` (CGEventTap), `TextInjector` (inject / clipboard)
+- `Context/` — hotkey-triggered bounded macOS Accessibility traversal, per-app workspace
+  providers, candidate resolution, and automatic repo-detection preference
 - `Index/` — `Symbol`/`Language`/`SymbolKind`, `RepoScanner`, `TreeSitterParser` (+ the
   `SymbolParser` facade), `Indexer` (off-main index build), `SymbolIndex` (+ `SymbolMatcher`,
   `IndexCache`)
 - `UI/` — `SymbolPickerView`, `SymbolPickerViewModel`
-- `Capture/` — `OCREngine`, `ScreenCapture`. **Currently unused / dead code** (no callers); see `TASKS.md` T9 before relying on it.
 
 Symbols are extracted by `TreeSitterParser` from real Tree-sitter grammars: **Swift, Python,
 TypeScript (`.ts`), TSX (`.tsx`), JavaScript (`.js`/`.jsx`), Rust, Go**.

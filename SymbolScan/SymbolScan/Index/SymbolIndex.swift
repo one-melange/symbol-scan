@@ -162,10 +162,9 @@ class SymbolIndex: ObservableObject {
         jobs[root] = task
     }
 
-    /// Main-actor completion for an index job: publish results if `root` is still the active repo,
-    /// fire the completion banner (real scans only — cache hits don't reach here), and surface
-    /// errors. A cancelled job (superseded by a forced re-index of the same repo) leaves state to
-    /// its replacement.
+    /// Main-actor completion for an index job: publish results if `root` is still the active repo
+    /// and surface errors. A cancelled job (superseded by a forced re-index of the same repo) leaves
+    /// state to its replacement.
     private func finishJob(root: URL, outcome: Result<Indexer.Result, Error>) {
         switch outcome {
         case .success(let result):
@@ -183,7 +182,6 @@ class SymbolIndex: ObservableObject {
                 flushTask = nil
             }
             Log.index.info("Indexed \(result.symbols.count) symbols across \(result.fileCount) files in \(root.lastPathComponent, privacy: .public)")
-            IndexNotifier.notifyIndexed(root: root, count: result.symbols.count)
         case .failure(let error):
             if error is CancellationError { return }   // replaced by a forced re-index
             jobs[root] = nil
@@ -236,9 +234,8 @@ class SymbolIndex: ObservableObject {
         }
     }
 
-    /// Main-actor completion for an incremental splice. Publishes silently — no `IndexNotifier`
-    /// banner, unlike a full scan — buffers the patch for a coalesced write, then re-drains to pick
-    /// up anything that changed mid-splice.
+    /// Main-actor completion for an incremental splice. Publishes the result, buffers the patch for
+    /// a coalesced write, then re-drains to pick up anything that changed mid-splice.
     private func finishIncremental(root: URL, updated: [Symbol], patch: IndexCache.Patch, epoch: Int) {
         incrementalRunning = false
         // Discard if the repo switched away, a full (re)index is running or has published since we

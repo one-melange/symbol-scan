@@ -4,7 +4,8 @@
 
 ### 1. Stable code signing (keeps the Accessibility grant)
 
-SymbolScan needs Accessibility access to run its global `CGEventTap`. macOS ties that
+SymbolScan needs Accessibility access for its global `CGEventTap`, text injection, and the
+bounded AX probe that identifies the active Codex project. macOS ties that
 grant to the app's code signature, so an **ad-hoc** signed build loses the grant on every
 rebuild (the signature's hash changes) and re-prompts each run. Signing with a stable
 **Apple Development** identity fixes this — the grant then persists across rebuilds.
@@ -124,7 +125,7 @@ needed, add the per-size PNGs (16/32/64/128/256/512) back to the set.
 
 Unit and headless-interaction tests live in the **SymbolScanTests** target (Swift Testing).
 They cover the pure logic — symbol matching/ranking, the per-language Tree-sitter queries in
-`TreeSitterParser`, `RepoScanner` path helpers, language detection — and drive the real `SymbolPickerViewModel`
+`TreeSitterParser`, workspace-context providers/resolution, `RepoScanner` path helpers, language detection — and drive the real `SymbolPickerViewModel`
 + `SymbolIndex` through the picker flow (type → filter → arrow → select) without any UI,
 git, or system permissions.
 
@@ -156,8 +157,7 @@ synchronized group, so new files are picked up automatically (no project edit ne
 
 | Permission | Required for | Where to grant |
 | --- | --- | --- |
-| Accessibility | `CGEventTap` global keystroke detection | System Settings → Privacy & Security → Accessibility |
-| Screen Recording | `ScreenCaptureKit` screen capture | System Settings → Privacy & Security → Screen Recording (prompted automatically on first use) |
+| Accessibility | Global hotkey, text injection, and hotkey-triggered Codex project detection | System Settings → Privacy & Security → Accessibility |
 
 ---
 
@@ -172,3 +172,22 @@ synchronized group, so new files are picked up automatically (no project edit ne
 **0 symbols indexed**
 - App Sandbox must be disabled — check Signing & Capabilities in Xcode, App Sandbox should not be present.
 - Verify the repo has tracked Swift/Python/TS/Rust/Go files: `git ls-files | grep -E "\.(swift|py|ts|rs|go)$"`
+
+**Automatic repo detection does not switch projects**
+- Confirm **Detect Repo Automatically** is checked in the menu-bar menu.
+- Automatic detection currently supports Codex only. Other apps intentionally keep the
+  current repo until a provider is added.
+- Choose the repo once with **Choose Repo…** if the app exposes only its project name. Names are
+  resolved conservatively against known repos and are ignored when ambiguous; exact paths can
+  discover a repo or worktree without prior selection.
+- Invoke the SymbolScan hotkey while Codex owns focus to run a project-folder probe. Detection does
+  not poll or observe app activation. Each probe skips dense sidebar/session lists, accepts project
+  evidence only from the focused window's top toolbar band, remains node/depth/time bounded, and
+  runs off the main thread. Failed lookups keep the current repo, and the picker never waits for a
+  probe before opening.
+- For live diagnosis, run a **Debug** build from Xcode, invoke the picker in Codex, and filter the
+  Xcode console for `SymbolScan CODEX PROJECT`. The concise trace prints only selector evidence,
+  extracted candidates, and `RESOLVED`. Debug builds additionally print diagnostic-only `AXValue`
+  fields (including editable prompt text), but those extra values stay out of candidate extraction
+  so diagnostics do not change behavior. These values can include visible prompts or session text;
+  do not share a trace without reviewing/redacting it.

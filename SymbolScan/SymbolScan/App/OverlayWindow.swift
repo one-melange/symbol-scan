@@ -109,14 +109,14 @@ class OverlayWindowController: NSWindowController {
 
     required init?(coder: NSCoder) { fatalError("not implemented") }
 
-    func show(match: HotkeyMatch) {
+    func show(match: HotkeyMatch, targetApp: NSRunningApplication? = nil) {
         guard let screen = NSScreen.main else { return }
 
-        // Capture the app that had focus when the trigger fired — must happen before
-        // we activate ourselves. Ignore ourselves (e.g. re-trigger while overlay is up).
-        let front = NSWorkspace.shared.frontmostApplication
-        if front?.bundleIdentifier != Bundle.main.bundleIdentifier {
-            previousApp = front
+        // AppDelegate captures this before we activate ourselves.
+        // Ignore ourselves (e.g. re-trigger while the overlay is already up), preserving the prior
+        // target so injection still returns to the original coding app.
+        if targetApp?.bundleIdentifier != Bundle.main.bundleIdentifier {
+            previousApp = targetApp
         }
 
         // Position: centered horizontally, pinned to the top of the focused screen.

@@ -46,6 +46,10 @@ The trigger is configurable via the menu bar item for the app.
   Rust, and Go.
 - **Files and directories too** — every tracked file and directory is searchable/injectable
   as a path, alongside in-file symbols.
+- **Automatic repo context** — when the picker hotkey is invoked from Codex, one bounded macOS
+  Accessibility probe reads its project-folder control. The picker opens immediately and refreshes
+  if the probe resolves a different repo. Unsupported apps keep the current repo. Detection can be
+  disabled from the menu bar.
 - **Predictable substring matching** — filtering is strict "contains", ranked so exact and
   prefix hits surface first (no surprising scattered-subsequence matches).
 - **Fast and out of the way** — a menu-bar-only (`.accessory`) app with no dock icon; the
@@ -79,8 +83,11 @@ cd symbol-scan
    including how to find your Team ID, are in [DEVELOPMENT.md](DEVELOPMENT.md).
 3. Build and run (`⌘R`).
 4. Grant **Accessibility** when prompted (System Settings → Privacy & Security → Accessibility
-   → enable **SymbolScan**). This is required for the global hotkey.
-5. From the menu-bar item, choose a git repo to index (**Choose Repo…**), then press `⌘⇧O` or the configured hotkey in any app to bring up the picker.
+   → enable **SymbolScan**). This is required for the global hotkey, text injection, and
+   automatic repo detection.
+5. From the menu-bar item, choose a git repo to index (**Choose Repo…**) as your fallback.
+   Invoke the SymbolScan hotkey after moving to a project in Codex to detect it; other apps
+   continue using the current repo.
 
 ## Install it (run outside Xcode)
 
@@ -102,6 +109,8 @@ installed `/Applications` copy, not a build launched from Xcode).
 flowchart TD
     Trigger["EventTap — global CGEventTap<br/>(configurable hotkey)"]
     App["AppDelegate<br/>owns event tap, index, overlay controller"]
+    Context["WorkspaceContextDetector<br/>one bounded AX lookup per hotkey"]
+    Resolver["RepoCandidateResolver<br/>path/name validation"]
     OWC["OverlayWindowController<br/>OverlayWindow + picker lifecycle"]
     View["SymbolPickerView (picker UI)"]
     VM["SymbolPickerViewModel"]
@@ -113,6 +122,7 @@ flowchart TD
     Parser["SymbolParser → TreeSitterParser<br/>(per-language symbol extraction)"]
 
     Trigger --> App
+    App -->|hotkey invoked from Codex| Context --> Resolver -->|activate matching repo| App
     App --> OWC
     OWC --> View --> VM --> Index
     OWC -->|on pick| Injector
@@ -122,8 +132,16 @@ flowchart TD
     Parser -->|builds| Index
 ```
 
-The pure, IO-free logic (matching/ranking, per-language queries) is deliberately kept off
-the main actor so it can be unit-tested in isolation.
+Each hotkey invocation from Codex starts one project-selector probe. It skips dense sidebar/session
+lists and accepts project evidence only from the focused window's top toolbar band. The walk remains
+time/node/depth bounded; snapshots are not persisted, and Release builds do not log AX text. There
+are no background AX scans or app-activation observers.
+App-specific providers are registered separately from the traversal and shared resolver,
+leaving a narrow extension point for Terminal, iTerm, Ghostty, or other apps that can expose a
+focused tab's working directory in the future.
+
+The pure, IO-free logic (matching/ranking, per-language queries, workspace candidate
+resolution) is deliberately kept off the main actor so it can be unit-tested in isolation.
 
 ## Testing
 
