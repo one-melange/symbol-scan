@@ -34,6 +34,7 @@
 		AA0900000000000000000051 /* ModelProvisioner.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0900000000000000000050 /* ModelProvisioner.swift */; };
 		AB0900000000000000000011 /* WorkspaceContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0900000000000000000010 /* WorkspaceContext.swift */; };
 		AB0900000000000000000021 /* AXWorkspaceReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0900000000000000000020 /* AXWorkspaceReader.swift */; };
+		AC0100000000000000000011 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0100000000000000000010 /* Theme.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -70,6 +71,7 @@
 		AA0900000000000000000050 /* ModelProvisioner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelProvisioner.swift; sourceTree = "<group>"; };
 		AB0900000000000000000010 /* WorkspaceContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceContext.swift; sourceTree = "<group>"; };
 		AB0900000000000000000020 /* AXWorkspaceReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AXWorkspaceReader.swift; sourceTree = "<group>"; };
+		AC0100000000000000000010 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -170,6 +172,7 @@
 			children = (
 				8EDE632C2FE5B2FF0024E0D5 /* SymbolPickerView.swift */,
 				8EDE63F22FE5B2FF0024E0D5 /* SymbolPickerViewModel.swift */,
+				AC0100000000000000000010 /* Theme.swift */,
 			);
 			path = UI;
 			sourceTree = "<group>";
@@ -372,6 +375,7 @@
 				AA0900000000000000000051 /* ModelProvisioner.swift in Sources */,
 				AB0900000000000000000011 /* WorkspaceContext.swift in Sources */,
 				AB0900000000000000000021 /* AXWorkspaceReader.swift in Sources */,
+				AC0100000000000000000011 /* Theme.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
