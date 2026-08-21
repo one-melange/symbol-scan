@@ -19,8 +19,6 @@ struct SymbolPickerView: View {
     @StateObject private var vm: SymbolPickerViewModel
     @ObservedObject private var index: SymbolIndex
 
-    private let rowHeight: CGFloat = 44
-
     init(viewModel: SymbolPickerViewModel,
          onResolve: @escaping (PickerAction) -> Void) {
         _vm = StateObject(wrappedValue: viewModel)
@@ -29,49 +27,47 @@ struct SymbolPickerView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: Theme.Spacing.card) {
             searchBar
-            Divider().opacity(0.3)
+            Divider().opacity(Theme.Opacity.divider)
             resultsList
             if vm.explanation != .idle {
                 explanationPane
             }
             statusBar
         }
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .background(Theme.Materials.card)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+            RoundedRectangle(cornerRadius: Theme.Radius.card)
+                .stroke(Theme.Colors.cardBorder, lineWidth: Theme.Stroke.cardBorder)
         )
-        .shadow(color: .black.opacity(0.4), radius: 24, x: 0, y: 8)
+        .shadow(color: Theme.Colors.cardShadow, radius: Theme.Shadow.radius, x: Theme.Shadow.x, y: Theme.Shadow.y)
     }
 
     // MARK: - Search bar
 
     private var searchBar: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: Theme.Spacing.searchBar) {
             // Trigger badge — the combo actually bound to the hotkey (reflects user config).
             Text(HotkeyPreference.load().displayString)
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .font(Theme.Fonts.triggerBadge)
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .background(.quaternary)
-                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .padding(Theme.Padding.triggerBadge)
+                .background(Theme.Materials.badgeFill)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.badge))
 
             // AppKit-backed field so navigation keys are intercepted at the field editor
             // level (see SearchFieldRepresentable) instead of via SwiftUI .onKeyPress,
             // which the field editor swallows once the field contains text.
             SearchFieldRepresentable(vm: vm, onResolve: onResolve)
-                .frame(height: 20)
+                .frame(height: Theme.Metrics.searchFieldHeight)
 
             if index.isIndexing {
                 ProgressView().scaleEffect(0.6)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(Theme.Padding.searchBar)
     }
 
     // MARK: - Results list
@@ -79,7 +75,7 @@ struct SymbolPickerView: View {
     private var resultsList: some View {
         ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
-                LazyVStack(spacing: 0) {
+                LazyVStack(spacing: Theme.Spacing.list) {
                     if vm.results.isEmpty {
                         emptyState
                     } else {
@@ -102,9 +98,12 @@ struct SymbolPickerView: View {
                     }
                 }
             }
-            .frame(minHeight: rowHeight * 5, maxHeight: CGFloat(min(max(vm.results.count, 5), 8)) * rowHeight + 8)
+            .frame(
+                minHeight: Theme.Metrics.rowHeight * CGFloat(Theme.Metrics.visibleRowsMin),
+                maxHeight: CGFloat(min(max(vm.results.count, Theme.Metrics.visibleRowsMin), Theme.Metrics.visibleRowsMax)) * Theme.Metrics.rowHeight + Theme.Metrics.listBottomPad
+            )
             .onChange(of: vm.selectedIndex) { _, i in
-                withAnimation(.easeInOut(duration: 0.1)) { proxy.scrollTo(i, anchor: .center) }
+                withAnimation(Theme.Motion.scroll) { proxy.scrollTo(i, anchor: .center) }
             }
         }
     }
@@ -115,14 +114,14 @@ struct SymbolPickerView: View {
     /// in as tokens arrive; caps its own height and scrolls so a long answer can't push the picker
     /// off-screen (the controller also grows the window when this appears).
     private var explanationPane: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Divider().opacity(0.3)
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: Theme.Spacing.explanation) {
+            Divider().opacity(Theme.Opacity.divider)
+            HStack(spacing: Theme.Spacing.explanationHeader) {
                 Image(systemName: "sparkles")
-                    .font(.system(size: 11))
+                    .font(Theme.Fonts.sparkles)
                     .foregroundStyle(.secondary)
                 Text(vm.selectedSymbol()?.name ?? "Explanation")
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .font(Theme.Fonts.explanationHeader)
                     .foregroundStyle(.secondary)
                 Spacer()
                 if vm.explanation.isBusy {
@@ -132,16 +131,15 @@ struct SymbolPickerView: View {
 
             ScrollView(.vertical, showsIndicators: true) {
                 Text(explanationBody)
-                    .font(.system(size: 12))
-                    .foregroundStyle(explanationIsError ? Color.red : .primary)
+                    .font(Theme.Fonts.explanationBody)
+                    .foregroundStyle(explanationIsError ? Theme.Colors.error : .primary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .frame(maxHeight: 150)
+            .frame(maxHeight: Theme.Metrics.explanationMaxHeight)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
+        .padding(Theme.Padding.explanation)
     }
 
     /// The text rendered in the pane for the current explanation state.
@@ -164,40 +162,26 @@ struct SymbolPickerView: View {
     // MARK: - Status bar
 
     private var statusBar: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: Theme.Spacing.statusBar) {
             if let root = index.indexedRepoRoot {
                 Label(root.lastPathComponent, systemImage: "folder.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.primary.opacity(0.78))
+                    .font(Theme.Fonts.statusLabel)
+                    .foregroundStyle(Theme.Colors.statusStrong)
                     .lineLimit(1)
             }
             Spacer()
             Text("\(index.symbolCount) symbols")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.primary.opacity(0.78))
-            Divider().frame(height: 10)
-            Text("↵ inject")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.primary.opacity(0.68))
-            Text("⇥ copy")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.primary.opacity(0.68))
-            Text("⌘E explain")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.primary.opacity(0.68))
-            Text("esc dismiss")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.primary.opacity(0.68))
-            Text("⌘O repo")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.primary.opacity(0.68))
-            Text("⌘Q quit")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.primary.opacity(0.68))
+                .font(Theme.Fonts.statusCount)
+                .foregroundStyle(Theme.Colors.statusStrong)
+            Divider().frame(height: Theme.Metrics.statusDividerHeight)
+            ForEach(["↵ inject", "⇥ copy", "⌘E explain", "esc dismiss", "⌘O repo", "⌘Q quit"], id: \.self) { hint in
+                Text(hint)
+                    .font(Theme.Fonts.statusHint)
+                    .foregroundStyle(Theme.Colors.statusHint)
+            }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 7)
-        .background(.bar)
+        .padding(Theme.Padding.statusBar)
+        .background(Theme.Materials.statusBar)
     }
 
     // MARK: - Empty state
@@ -210,19 +194,19 @@ struct SymbolPickerView: View {
             query: vm.query,
             error: index.lastIndexError
         )
-        return VStack(spacing: 6) {
+        return VStack(spacing: Theme.Spacing.emptyState) {
             Text(copy.title)
-                .font(.system(size: 13))
+                .font(Theme.Fonts.emptyTitle)
                 .foregroundStyle(.secondary)
             if let hint = copy.hint {
                 Text(hint)
-                    .font(.system(size: 11))
+                    .font(Theme.Fonts.emptyHint)
                     .foregroundStyle(.tertiary)
                     .multilineTextAlignment(.center)
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(24)
+        .padding(Theme.Padding.emptyState)
     }
 
 }
@@ -247,7 +231,7 @@ struct SearchFieldRepresentable: NSViewRepresentable {
         field.drawsBackground = false
         field.focusRingType = .none
         field.placeholderString = "Search symbols…"
-        field.font = .systemFont(ofSize: 15, weight: .regular)
+        field.font = Theme.Fonts.searchField
         field.lineBreakMode = .byTruncatingTail
         field.cell?.usesSingleLineMode = true
         field.delegate = context.coordinator
@@ -333,24 +317,24 @@ struct SymbolRow: View {
     let showsDocumentationPopover: Bool
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: Theme.Spacing.row) {
             // Kind badge
             Text(symbol.kind.icon)
-                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                .foregroundStyle(.white)
-                .frame(width: 20, height: 20)
-                .background(kindColor)
-                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .font(Theme.Fonts.kindBadge)
+                .foregroundStyle(Theme.Colors.badgeText)
+                .frame(width: Theme.Metrics.badgeSize, height: Theme.Metrics.badgeSize)
+                .background(Theme.Colors.kind(symbol.kind))
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.badge))
 
             // Symbol name + signature
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: Theme.Spacing.rowText) {
                 Text(symbol.name)
-                    .font(.system(size: 13, weight: .medium, design: .monospaced))
+                    .font(Theme.Fonts.rowName)
                     .foregroundStyle(.primary)
 
                 if let sig = symbol.signature {
                     Text(sig)
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(Theme.Fonts.rowDetail)
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
                 }
@@ -359,37 +343,26 @@ struct SymbolRow: View {
             Spacer()
 
             // File path + line (line is synthetic/0 for file & directory entries, so hide it there)
-            VStack(alignment: .trailing, spacing: 1) {
+            VStack(alignment: .trailing, spacing: Theme.Spacing.rowText) {
                 Text(symbol.displayPath)
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(Theme.Fonts.rowDetail)
                     .foregroundStyle(.secondary)
                 if symbol.kind != .file && symbol.kind != .directory {
                     Text(":\(symbol.line)")
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(Theme.Fonts.rowDetail)
                         .foregroundStyle(.tertiary)
                 }
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(isSelected ? Color.accentColor.opacity(0.15) : .clear)
-        .animation(.easeInOut(duration: 0.08), value: isSelected)
+        .padding(Theme.Padding.row)
+        .background(isSelected ? Theme.Colors.selection : .clear)
+        .animation(Theme.Motion.selection, value: isSelected)
         // SwiftUI `.help` never presents from this floating, borderless accessory window on macOS
         // 26. Anchor an AppKit-owned popover to the selected row instead (T27).
         .background(DocumentationPopoverAnchor(
             text: symbol.documentationText,
             isPresented: showsDocumentationPopover
         ))
-    }
-
-    private var kindColor: Color {
-        switch symbol.kind {
-        case .function, .method:          return .blue
-        case .class, .struct:             return .purple
-        case .enum, .trait, .interface:   return .orange
-        case .constant, .variable, .type: return .green
-        case .file, .directory:           return .gray
-        }
     }
 }
 
@@ -473,18 +446,18 @@ private final class DocumentationPopoverViewController: NSViewController {
     override func loadView() {
         let container = NSView()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = .systemFont(ofSize: 12)
+        label.font = Theme.Fonts.popoverLabel
         label.textColor = .labelColor
         label.maximumNumberOfLines = 10
         label.lineBreakMode = .byWordWrapping
 
         container.addSubview(label)
         NSLayoutConstraint.activate([
-            container.widthAnchor.constraint(equalToConstant: 360),
-            label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
-            label.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
-            label.topAnchor.constraint(equalTo: container.topAnchor, constant: 10),
-            label.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -10),
+            container.widthAnchor.constraint(equalToConstant: Theme.Metrics.popoverWidth),
+            label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: Theme.Metrics.popoverInsetH),
+            label.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -Theme.Metrics.popoverInsetH),
+            label.topAnchor.constraint(equalTo: container.topAnchor, constant: Theme.Metrics.popoverInsetV),
+            label.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -Theme.Metrics.popoverInsetV),
         ])
         view = container
     }
@@ -495,7 +468,7 @@ private final class DocumentationPopoverViewController: NSViewController {
         label.stringValue = text
         label.invalidateIntrinsicContentSize()
         view.layoutSubtreeIfNeeded()
-        preferredContentSize = NSSize(width: 360, height: max(view.fittingSize.height, 40))
+        preferredContentSize = NSSize(width: Theme.Metrics.popoverWidth, height: max(view.fittingSize.height, Theme.Metrics.popoverMinHeight))
     }
 }
 
@@ -558,7 +531,7 @@ struct HotkeySettingsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: Theme.Spacing.settings) {
             Text("Trigger Hotkey").font(.headline)
             Text("Click the shortcut, then press a new key combination. A modifier is required; Esc cancels.")
                 .font(.caption)
@@ -567,7 +540,7 @@ struct HotkeySettingsView: View {
 
             HStack {
                 Text("Open the picker")
-                    .font(.system(size: 13))
+                    .font(Theme.Fonts.settingsRow)
                 Spacer()
                 KeyRecorderView(
                     binding: binding,
@@ -581,7 +554,7 @@ struct HotkeySettingsView: View {
                         onRecording(recording)
                     }
                 )
-                .frame(width: 130, height: 26)
+                .frame(width: Theme.Metrics.recorderSize.width, height: Theme.Metrics.recorderSize.height)
             }
 
             // Saved confirmation. Reserve the row height either way so the layout doesn't jump.
@@ -589,12 +562,12 @@ struct HotkeySettingsView: View {
                 if justSaved {
                     Label("Saved — \(binding.displayString) is now your hotkey", systemImage: "checkmark.circle.fill")
                         .font(.caption)
-                        .foregroundStyle(.green)
+                        .foregroundStyle(Theme.Colors.success)
                 } else {
                     Text(" ").font(.caption)
                 }
             }
-            .frame(height: 16, alignment: .leading)
+            .frame(height: Theme.Metrics.savedRowHeight, alignment: .leading)
 
             Divider()
             Button("Restore Default") {
@@ -603,8 +576,8 @@ struct HotkeySettingsView: View {
                 justSaved = true
             }
         }
-        .padding(20)
-        .frame(width: 380)
+        .padding(Theme.Padding.settings)
+        .frame(width: Theme.Metrics.settingsPaneWidth)
     }
 }
 
@@ -657,21 +630,21 @@ final class KeyRecorderNSView: NSView {
     }
 
     override var acceptsFirstResponder: Bool { true }
-    override var intrinsicContentSize: NSSize { NSSize(width: 130, height: 26) }
+    override var intrinsicContentSize: NSSize { Theme.Metrics.recorderSize }
 
     override func draw(_ dirtyRect: NSRect) {
-        let radius: CGFloat = 6
+        let radius = Theme.Radius.recorder
         let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: radius, yRadius: radius)
-        (isRecording ? NSColor.controlAccentColor.withAlphaComponent(0.15) : NSColor.controlBackgroundColor).setFill()
+        (isRecording ? NSColor.controlAccentColor.withAlphaComponent(Theme.Opacity.recorderRecordingFill) : NSColor.controlBackgroundColor).setFill()
         path.fill()
         (isRecording ? NSColor.controlAccentColor : NSColor.separatorColor).setStroke()
-        path.lineWidth = isRecording ? 1.5 : 1
+        path.lineWidth = isRecording ? Theme.Stroke.recorderRecording : Theme.Stroke.recorderIdle
         path.stroke()
 
         let text = isRecording ? (hint ?? "Recording…") : binding.displayString
         let color: NSColor = (hint != nil) ? .systemRed : (isRecording ? .controlAccentColor : .labelColor)
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .medium),
+            .font: Theme.Fonts.recorder,
             .foregroundColor: color,
         ]
         let str = NSAttributedString(string: text, attributes: attrs)
