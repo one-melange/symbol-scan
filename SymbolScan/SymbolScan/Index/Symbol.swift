@@ -93,17 +93,6 @@ enum SymbolKind: String, CaseIterable, Codable {
         case .directory: return "D"
         }
     }
-
-    var color: String {
-        // Used in SwiftUI as named colors — define these in Assets.xcassets
-        switch self {
-        case .function, .method:           return "symbolFunc"
-        case .class, .struct:              return "symbolType"
-        case .enum, .trait, .interface:    return "symbolEnum"
-        case .constant, .variable, .type:  return "symbolVar"
-        case .file, .directory:            return "symbolPath"
-        }
-    }
 }
 
 // MARK: - Language
