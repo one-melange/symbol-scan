@@ -67,8 +67,8 @@ class OverlayWindowController: NSWindowController {
 
     /// Overlay size while showing just the picker, and while an explanation pane is open. The window
     /// grows to `expandedSize` so a streamed answer isn't clipped, and shrinks back when it clears.
-    private static let baseSize = NSSize(width: 520, height: 420)
-    private static let expandedSize = NSSize(width: 520, height: 600)
+    private static let baseSize = Theme.Window.baseSize
+    private static let expandedSize = Theme.Window.expandedSize
     /// Live subscription to the current view model's explanation state, driving the resize.
     private var explanationObserver: AnyCancellable?
 
@@ -255,7 +255,7 @@ enum OverlayPlacement {
     /// Horizontally centered in `visible`, pinned `topMargin` below its top edge.
     /// `visible` is expected to be the target screen's `visibleFrame` (global coordinates,
     /// menu bar/Dock excluded); AppKit rects are bottom-left-origin, so "top" is `maxY`.
-    static func frame(in visible: NSRect, size: NSSize, topMargin: CGFloat = 12) -> NSRect {
+    static func frame(in visible: NSRect, size: NSSize, topMargin: CGFloat = Theme.Window.topMargin) -> NSRect {
         NSRect(x: visible.midX - size.width / 2,
                y: visible.maxY - topMargin - size.height,
                width: size.width,
