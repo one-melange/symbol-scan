@@ -144,4 +144,28 @@ import Foundation
         #expect(vm.results.isEmpty)
         #expect(vm.selectedInjectionText() == nil)
     }
+
+    // Rows scrolling under a resting pointer fire hover-enter too; before this guard, arrowing past
+    // the list's midpoint (the first press that recentres) snapped the selection to the row under
+    // the cursor — e.g. back to the top row.
+    @Test func hoverAtUnchangedPointerDoesNotStealKeyboardSelection() {
+        let index = SymbolIndex()
+        index.loadForTesting((0..<10).map {
+            Symbol(name: "sym\($0)", kind: .function, filePath: "f.swift", line: $0)
+        })
+        let resting = CGPoint(x: 100, y: 700)
+        let vm = SymbolPickerViewModel(index: index, pointerLocation: resting)
+        for _ in 0..<4 { vm.moveSelection(+1) }
+        #expect(vm.selectedIndex == 4)
+
+        vm.hover(row: 0, pointer: resting)          // synthetic enter from scrolling
+        #expect(vm.selectedIndex == 4)
+        #expect(vm.isDocumentationPopoverPresented)
+
+        vm.hover(row: 2, pointer: CGPoint(x: 100, y: 650))   // pointer really moved
+        #expect(vm.selectedIndex == 2)
+
+        vm.hover(row: 5, pointer: CGPoint(x: 100, y: 650))   // still at that spot → ignored
+        #expect(vm.selectedIndex == 2)
+    }
 }

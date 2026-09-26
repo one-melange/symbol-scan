@@ -65,12 +65,20 @@ final class SymbolPickerViewModel: ObservableObject {
     /// query edits alone are not a sufficient trigger for recomputing the visible rows.
     private var indexObserver: AnyCancellable?
 
+    /// Screen-space pointer location of the last hover we honored (seeded with where the pointer was
+    /// when the picker opened). Hover-enter also fires when rows scroll *under* a resting pointer —
+    /// e.g. arrow-key navigation recentring the list — and honoring those would yank the keyboard
+    /// selection to whatever row slid beneath the cursor. Only a pointer that actually moved selects.
+    private var lastPointerLocation: CGPoint
+
     init(index: SymbolIndex,
          llmClient: (any LLMClient)? = nil,
-         provisioner: ModelProvisioner? = nil) {
+         provisioner: ModelProvisioner? = nil,
+         pointerLocation: CGPoint = NSEvent.mouseLocation) {
         self.index = index
         self.llmClient = llmClient
         self.provisioner = provisioner
+        self.lastPointerLocation = pointerLocation
         self.results = index.search("")
         self.indexObserver = index.$searchRevision
             .dropFirst()
@@ -122,6 +130,16 @@ final class SymbolPickerViewModel: ObservableObject {
         selectedIndex = index
         isDocumentationPopoverPresented = false
         resetExplanation()
+    }
+
+    /// Mouse hover entered `row` with the pointer at `pointer` (global screen coordinates, so it is
+    /// unaffected by the list scrolling). Selects the row only if the pointer moved since the last
+    /// honored hover; a hover-enter at an unchanged location is synthetic (content scrolled under a
+    /// stationary cursor) and must not override keyboard navigation.
+    func hover(row: Int, pointer: CGPoint) {
+        guard pointer != lastPointerLocation else { return }
+        lastPointerLocation = pointer
+        select(row)
     }
 
     /// Cancel any in-flight explanation and return to `.idle`. Called whenever the selection moves,
