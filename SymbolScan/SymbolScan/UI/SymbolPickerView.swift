@@ -93,7 +93,7 @@ struct SymbolPickerView: View {
                                 .id(i)
                                 .contentShape(Rectangle())
                                 .onTapGesture { vm.select(i); onResolve(.inject) }
-                                .onHover { if $0 { vm.select(i) } }
+                                .onHover { if $0 { vm.hover(row: i, pointer: NSEvent.mouseLocation) } }
                         }
                     }
                 }
