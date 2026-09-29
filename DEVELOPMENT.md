@@ -105,6 +105,18 @@ installed `/Applications` copy — a login item pointing at a DerivedData/Xcode 
 relaunch. The app ships as an agent (`LSUIElement`), so it starts straight into the menu bar with
 no dock icon or launch flash.
 
+To uninstall, run `./scripts/uninstall.sh`. It quits the app (and any orphaned `llama-server`),
+then removes `/Applications/SymbolScan.app`, the index cache
+(`~/Library/Application Support/SymbolScan/index`), the `promethiumventures.SymbolScan` defaults
+domain. It deliberately **leaves the Accessibility grant alone**, so a reinstall with the same
+signing identity doesn't re-prompt. If you ever need a clean TCC state, remove SymbolScan in System
+Settings → Privacy & Security → Accessibility. The model weights under
+`~/Library/Application Support/SymbolScan/models` are **kept by default**: they rarely change and
+are ~2 GB to fetch again, while most uninstall/reinstall cycles are app changes. Pass
+`--purge-model` for a complete removal, and `--dry-run` to preview. Login items registered via
+`SMAppService` can't be removed per-app from the shell, so the script only warns if one is still
+registered. Untick **Open at Login** first, or remove it in System Settings → General → Login Items.
+
 ### Changing the app icon
 
 The icon is a single **1024×1024** PNG (transparent corners — you draw the rounded squircle
