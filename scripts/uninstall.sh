@@ -17,7 +17,7 @@ APP="/Applications/SymbolScan.app"                         # DEST in scripts/ins
 SUPPORT="$HOME/Library/Application Support/SymbolScan"
 INDEX_DIR="$SUPPORT/index"                                 # IndexCache.baseDirectory() (Index/SymbolIndex.swift)
 MODEL_DIR="$SUPPORT/models"                                # LlamaServerLocator.defaultModelDirectory() (LLM/LlamaServer.swift)
-LLAMA_SERVER="SymbolScan.app/Contents/Helpers/llama/llama-server"
+LLAMA_SERVER="$APP/Contents/Helpers/llama/llama-server"     # LlamaServerLocator.binaryURL() (LLM/LlamaServer.swift)
 
 PURGE_MODEL=0
 DRY_RUN=0
@@ -52,15 +52,15 @@ remove() {
 
 echo "▸ Quitting SymbolScan…"
 run osascript -e 'quit app "SymbolScan"' >/dev/null 2>&1 || true
-# The app stops its llama-server child on quit; this catches one orphaned by a crash.
-run pkill -f "$LLAMA_SERVER" >/dev/null 2>&1 || true
+# The app stops its llama-server child on quit; this catches one orphaned by a crash. Anchored to
+# the installed copy's executable path (dots escaped for the regex) so it never touches another
+# app's llama-server, a Homebrew one, a dev build's, or a process that merely mentions the path.
+run pkill -f "^${LLAMA_SERVER//./\\.}( |\$)" >/dev/null 2>&1 || true
 
 # SMAppService login items can't be unregistered per-app from the shell (`sfltool resetbtm` wipes
-# every app's), so detect a leftover one read-only and point at where to remove it.
-if sfltool dumpbtm 2>/dev/null | grep -q "$BUNDLE_ID"; then
-  echo "! A login item for SymbolScan is registered. Remove it in"
-  echo "  System Settings → General → Login Items (or untick 'Open at Login' before uninstalling)."
-fi
+# every app's), and even the read-only `sfltool dumpbtm` can block on an admin prompt — so just
+# point at where to remove one. Harmless if none exists: a login item for a deleted bundle is inert.
+echo "▸ If 'Open at Login' was on, remove SymbolScan in System Settings → General → Login Items."
 
 remove "$APP" "app bundle"
 remove "$INDEX_DIR" "index cache"

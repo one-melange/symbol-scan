@@ -113,9 +113,11 @@ signing identity doesn't re-prompt. If you ever need a clean TCC state, remove S
 Settings → Privacy & Security → Accessibility. The model weights under
 `~/Library/Application Support/SymbolScan/models` are **kept by default**: they rarely change and
 are ~2 GB to fetch again, while most uninstall/reinstall cycles are app changes. Pass
-`--purge-model` for a complete removal, and `--dry-run` to preview. Login items registered via
-`SMAppService` can't be removed per-app from the shell, so the script only warns if one is still
-registered. Untick **Open at Login** first, or remove it in System Settings → General → Login Items.
+`--purge-model` for a complete removal, and `--dry-run` to preview. Only the installed copy's own
+`llama-server` is stopped (matched by its exact `/Applications/...` executable path), so other apps'
+servers and a dev build's are left alone. Login items registered via `SMAppService` can't be removed
+per-app from the shell (and `sfltool dumpbtm` can block on an admin prompt), so the script just
+reminds you. Untick **Open at Login** first, or remove it in System Settings → General → Login Items.
 
 ### Changing the app icon
 
