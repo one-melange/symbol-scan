@@ -103,6 +103,17 @@ you can start it any time from Spotlight or Finder. To have it start automatical
 menu-bar menu and tick **Open at Login** (registered via `SMAppService`; meaningful only for the
 installed `/Applications` copy, not a build launched from Xcode).
 
+To remove it again:
+
+```bash
+./scripts/uninstall.sh
+```
+
+This quits the app and removes the bundle, the symbol index cache, and its preferences. The
+Accessibility grant is left in place so a reinstall doesn't re-prompt, and the downloaded ⌘E
+model (~2 GB) is **kept** so it isn't re-downloaded — add `--purge-model` to delete that too, or
+`--dry-run` to preview what would be removed.
+
 ## How it works
 
 ```mermaid
